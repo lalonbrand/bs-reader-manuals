@@ -18,8 +18,10 @@ enum class ReaderSurfaceTone(val label: String) {
     NIGHT("Night")
 }
 
+const val DEFAULT_CATALOG_URL = "https://mrlrajin.github.io/bs-reader-manuals/catalog.json"
+
 data class ReaderPreferences(
-    val catalogUrl: String = "",
+    val catalogUrl: String = DEFAULT_CATALOG_URL,
     val surfaceTone: ReaderSurfaceTone = ReaderSurfaceTone.PAPER,
     val showPageOverlay: Boolean = true
 )
@@ -36,7 +38,7 @@ class SettingsDataStore(private val context: Context) {
             runCatching { ReaderSurfaceTone.valueOf(raw) }.getOrNull()
         } ?: ReaderSurfaceTone.PAPER
         ReaderPreferences(
-            catalogUrl = prefs[Keys.CATALOG_URL] ?: "",
+            catalogUrl = prefs[Keys.CATALOG_URL]?.takeIf { it.isNotBlank() } ?: DEFAULT_CATALOG_URL,
             surfaceTone = tone,
             showPageOverlay = prefs[Keys.SHOW_PAGE_OVERLAY] ?: true
         )

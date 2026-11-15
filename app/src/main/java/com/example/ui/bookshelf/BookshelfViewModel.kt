@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -32,7 +33,7 @@ data class BookshelfUiState(
     val transfers: Map<String, TransferProgress> = emptyMap(),
     val selectedFilter: BookshelfFilter = BookshelfFilter.ALL,
     val searchQuery: String = "",
-    val catalogUrl: String = "",
+    val catalogUrl: String = com.example.data.local.DEFAULT_CATALOG_URL,
     val isSyncingCatalog: Boolean = false,
     val isInitializing: Boolean = true
 )
@@ -110,6 +111,13 @@ class BookshelfViewModel(
         viewModelScope.launch {
             runCatching { repository.initializeStarterBookIfEmpty() }
             isInitializing.value = false
+
+            val url = runCatching { settingsStore.preferences.first().catalogUrl }.getOrDefault("")
+            if (url.isNotBlank()) {
+                isSyncingCatalog.value = true
+                runCatching { repository.syncRemoteCatalog(url) }
+                isSyncingCatalog.value = false
+            }
         }
     }
 
