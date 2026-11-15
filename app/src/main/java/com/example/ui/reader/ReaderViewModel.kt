@@ -115,12 +115,31 @@ class ReaderViewModel(
     }
 
     fun goToPage(targetIndex: Int) {
-        val files = _uiState.value.pageFiles
+        val state = _uiState.value
+        val files = state.pageFiles
         if (files.isEmpty()) return
         val clamped = targetIndex.coerceIn(0, files.lastIndex)
-        if (clamped == _uiState.value.currentPageIndex && _uiState.value.currentBitmap != null) return
+        if (clamped == state.currentPageIndex && state.currentBitmap != null) return
 
-        _uiState.update { it.copy(currentPageIndex = clamped) }
+        val immediateCurr = files.getOrNull(clamped)?.let { pageCache.getCached(it) }
+            ?: when (clamped) {
+                state.currentPageIndex + 1 -> state.nextBitmap
+                state.currentPageIndex - 1 -> state.prevBitmap
+                else -> state.currentBitmap
+            }
+        val immediateNext = files.getOrNull(clamped + 1)?.let { pageCache.getCached(it) }
+            ?: if (clamped == state.currentPageIndex - 1) state.currentBitmap else null
+        val immediatePrev = files.getOrNull(clamped - 1)?.let { pageCache.getCached(it) }
+            ?: if (clamped == state.currentPageIndex + 1) state.currentBitmap else null
+
+        _uiState.update {
+            it.copy(
+                currentPageIndex = clamped,
+                currentBitmap = immediateCurr ?: it.currentBitmap,
+                nextBitmap = immediateNext,
+                prevBitmap = immediatePrev
+            )
+        }
         viewModelScope.launch {
             repository.updateReadingProgress(bookId, clamped)
         }

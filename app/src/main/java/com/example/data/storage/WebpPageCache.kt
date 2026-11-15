@@ -64,7 +64,7 @@ class WebpPageCache {
     }
 
     fun prefetchAround(scope: CoroutineScope, pages: List<File>, centerIndex: Int, maxDimensionPx: Int = 2048) {
-        val indices = listOf(centerIndex, centerIndex + 1, centerIndex - 1, centerIndex + 2)
+        val indices = listOf(centerIndex, centerIndex + 1, centerIndex - 1, centerIndex + 2, centerIndex - 2)
             .filter { it in pages.indices }
             .distinct()
 
