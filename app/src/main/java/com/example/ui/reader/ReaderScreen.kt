@@ -89,7 +89,6 @@ import com.example.R
 import com.example.data.local.ReaderSurfaceTone
 import com.example.ui.theme.PearlWhite
 import com.example.ui.theme.SoftCyan
-import com.example.ui.theme.glassPanel
 import kotlin.math.roundToInt
 
 @Composable
@@ -169,7 +168,6 @@ fun ReaderScreen(
         ReaderSurfaceTone.NIGHT -> Color(0xFF0D1128)
     }
 
-    val chromeBackdrop = Color(0xDE13193A)
     val chromeOnSurface = MaterialTheme.colorScheme.onSurface
 
     Box(
@@ -272,8 +270,8 @@ fun ReaderScreen(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(50),
-                        color = chromeBackdrop,
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
+                        color = Color(0x7813193A),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
                     ) {
                         Text(
                             text = "Swipe to curl • Pinch to zoom",
@@ -293,8 +291,8 @@ fun ReaderScreen(
                             .navigationBarsPadding()
                             .padding(bottom = 12.dp),
                         shape = RoundedCornerShape(50),
-                        color = chromeBackdrop.copy(alpha = 0.85f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
+                        color = Color(0x7813193A),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
                     ) {
                         Text(
                             text = "${uiState.currentPageIndex + 1} / ${uiState.pageFiles.size}" +
@@ -306,7 +304,7 @@ fun ReaderScreen(
                     }
                 }
 
-                // Floating Cosmic Glass Top Bar
+                // Floating Transparent Glass Top Bar
                 AnimatedVisibility(
                     visible = showChrome,
                     enter = fadeIn() + slideInVertically { -it },
@@ -316,7 +314,14 @@ fun ReaderScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(chromeBackdrop)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0x88141A3D),
+                                        Color(0x66111735)
+                                    )
+                                )
+                            )
                     ) {
                         Row(
                             modifier = Modifier
@@ -431,22 +436,37 @@ fun ReaderScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .widthIn(max = 580.dp)
-                            .shadow(
-                                elevation = 18.dp,
-                                shape = dockShape,
-                                ambientColor = Color.Black.copy(alpha = 0.45f),
-                                spotColor = Color.Black.copy(alpha = 0.60f)
-                            )
+                            .clip(dockShape)
                             .background(
                                 brush = Brush.verticalGradient(
                                     colors = listOf(
-                                        Color(0xEB222A56),
-                                        Color(0xEB131836)
+                                        Color(0x5C263066),
+                                        Color(0x75121838)
                                     )
                                 ),
                                 shape = dockShape
                             )
-                            .glassPanel(shape = dockShape)
+                            .background(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = 0.18f),
+                                        Color.White.copy(alpha = 0.03f),
+                                        Color.Transparent
+                                    )
+                                ),
+                                shape = dockShape
+                            )
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = 0.52f),
+                                        SoftCyan.copy(alpha = 0.26f),
+                                        Color.White.copy(alpha = 0.14f)
+                                    )
+                                ),
+                                shape = dockShape
+                            )
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         Column(
@@ -461,8 +481,8 @@ fun ReaderScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(50),
-                                    color = Color.White.copy(alpha = 0.11f),
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
+                                    color = Color(0x52101634),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f))
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -483,7 +503,7 @@ fun ReaderScreen(
                                         Text(
                                             text = "• $progressPct%",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = Color.White.copy(alpha = 0.80f)
                                         )
                                     }
                                 }
@@ -495,16 +515,16 @@ fun ReaderScreen(
                                     Surface(
                                         shape = CircleShape,
                                         color = if (uiState.pageSoundEnabled) {
-                                            Color.White.copy(alpha = 0.14f)
+                                            Color(0x5C12193B)
                                         } else {
-                                            Color.White.copy(alpha = 0.06f)
+                                            Color(0x3D12193B)
                                         },
                                         border = BorderStroke(
                                             1.dp,
                                             if (uiState.pageSoundEnabled) {
-                                                SoftCyan.copy(alpha = 0.45f)
+                                                SoftCyan.copy(alpha = 0.55f)
                                             } else {
-                                                Color.White.copy(alpha = 0.16f)
+                                                Color.White.copy(alpha = 0.22f)
                                             }
                                         ),
                                         modifier = Modifier
@@ -530,7 +550,7 @@ fun ReaderScreen(
                                                 } else {
                                                     "Enable page turn sound"
                                                 },
-                                                tint = if (uiState.pageSoundEnabled) SoftCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                tint = if (uiState.pageSoundEnabled) SoftCyan else Color.White.copy(alpha = 0.78f),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -538,8 +558,8 @@ fun ReaderScreen(
 
                                     Surface(
                                         shape = RoundedCornerShape(50),
-                                        color = Color.White.copy(alpha = 0.13f),
-                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
+                                        color = Color(0x5C12193B),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.32f)),
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(50))
                                             .testTag("rotation_toggle_button")
@@ -592,15 +612,15 @@ fun ReaderScreen(
                                         modifier = Modifier
                                             .size(42.dp)
                                             .background(
-                                                color = Color.White.copy(alpha = if (canGoPrev) 0.14f else 0.05f),
+                                                color = if (canGoPrev) Color(0x5C12193B) else Color(0x2E12193B),
                                                 shape = CircleShape
                                             )
                                             .border(
                                                 width = 1.dp,
-                                                color = Color.White.copy(alpha = if (canGoPrev) 0.26f else 0.10f),
+                                                color = Color.White.copy(alpha = if (canGoPrev) 0.34f else 0.14f),
                                                 shape = CircleShape
                                             )
-                                            .alpha(if (canGoPrev) 1f else 0.4f),
+                                            .alpha(if (canGoPrev) 1f else 0.45f),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
@@ -624,7 +644,7 @@ fun ReaderScreen(
                                     colors = SliderDefaults.colors(
                                         thumbColor = PearlWhite,
                                         activeTrackColor = SoftCyan,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.18f),
+                                        inactiveTrackColor = Color(0x520E142F),
                                         activeTickColor = Color.Transparent,
                                         inactiveTickColor = Color.Transparent
                                     ),

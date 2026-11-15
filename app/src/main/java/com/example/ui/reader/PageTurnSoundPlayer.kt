@@ -49,13 +49,15 @@ class PageTurnSoundPlayer(
         scope.launch {
             val (fwdFile, bwdFile) = withContext(Dispatchers.IO) {
                 val cacheDir = appContext.cacheDir
-                val fwd = File(cacheDir, "bs_page_turn_fwd_v1.wav")
-                val bwd = File(cacheDir, "bs_page_turn_bwd_v1.wav")
+                File(cacheDir, "bs_page_turn_fwd_v1.wav").delete()
+                File(cacheDir, "bs_page_turn_bwd_v1.wav").delete()
+                val fwd = File(cacheDir, "bs_page_turn_fwd_v2.wav")
+                val bwd = File(cacheDir, "bs_page_turn_bwd_v2.wav")
                 if (!fwd.exists() || fwd.length() < 1000L) {
-                    writePaperTurnWav(fwd, seed = 4219, startFreqHz = 1650.0, endFreqHz = 860.0)
+                    writePaperTurnWav(fwd, seed = 4219, startFreqHz = 980.0, endFreqHz = 520.0)
                 }
                 if (!bwd.exists() || bwd.length() < 1000L) {
-                    writePaperTurnWav(bwd, seed = 7913, startFreqHz = 1480.0, endFreqHz = 780.0)
+                    writePaperTurnWav(bwd, seed = 7913, startFreqHz = 880.0, endFreqHz = 460.0)
                 }
                 fwd to bwd
             }
@@ -70,7 +72,7 @@ class PageTurnSoundPlayer(
         if (isReleased) return
         val id = if (isForward) forwardSoundId else backwardSoundId
         if (id != 0) {
-            soundPool.play(id, 0.42f, 0.42f, 1, 0, 1.0f)
+            soundPool.play(id, 0.22f, 0.22f, 1, 0, 1.0f)
         }
     }
 
@@ -86,18 +88,20 @@ class PageTurnSoundPlayer(
         endFreqHz: Double
     ) {
         val sampleRate = 44100
-        val durationSec = 0.19
+        val durationSec = 0.24
         val numSamples = (sampleRate * durationSec).toInt()
         val samples = ShortArray(numSamples)
         val rng = Random(seed)
 
-        // Biquad bandpass state + gentle 1-pole low-pass smoother to remove harsh hiss
+        // Dual-stage low-pass pre-filter + biquad bandpass + gentle post-smoother for silky paper air
         var x1 = 0.0
         var x2 = 0.0
         var y1 = 0.0
         var y2 = 0.0
-        var lpState = 0.0
-        val q = 1.25
+        var lp1 = 0.0
+        var lp2 = 0.0
+        var postLp = 0.0
+        val q = 0.85
 
         val rawFloat = DoubleArray(numSamples)
         var maxAbs = 1e-6
@@ -105,11 +109,12 @@ class PageTurnSoundPlayer(
         for (i in 0 until numSamples) {
             val t = i.toDouble() / (numSamples - 1).toDouble()
 
-            // Soft pink-tinted random excitation
+            // Velvet-smooth warm noise excitation
             val white = rng.nextDouble() * 2.0 - 1.0
-            lpState = lpState * 0.62 + white * 0.38
+            lp1 = lp1 * 0.78 + white * 0.22
+            lp2 = lp2 * 0.76 + lp1 * 0.24
 
-            // Sweep resonant center frequency smoothly downward as the page settles
+            // Gentle downward sweep mimicking soft paper gliding across a page
             val fc = startFreqHz + (endFreqHz - startFreqHz) * (t * t)
             val w0 = 2.0 * PI * fc / sampleRate
             val alpha = sin(w0) / (2.0 * q)
@@ -122,27 +127,27 @@ class PageTurnSoundPlayer(
             val a1 = -2.0 * cosW0
             val a2 = 1.0 - alpha
 
-            val filtered = (b0 * lpState + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0
+            val filtered = (b0 * lp2 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0
             x2 = x1
-            x1 = lpState
+            x1 = lp2
             y2 = y1
             y1 = filtered
 
-            // Two-stage soft paper brush envelope (thumb lift + page settle)
-            val liftPulse = 0.58 * exp(-((t - 0.24) / 0.14).let { it * it })
-            val settlePulse = 0.92 * exp(-((t - 0.58) / 0.19).let { it * it })
-            val fadeIn = if (t < 0.10) sin((PI / 2.0) * (t / 0.10)) else 1.0
-            val fadeOut = if (t > 0.80) cos((PI / 2.0) * ((t - 0.80) / 0.20)) else 1.0
-            val env = (liftPulse + settlePulse) * fadeIn * fadeOut
+            postLp = postLp * 0.55 + filtered * 0.45
 
-            val sampleVal = filtered * env
+            // Smooth raised-cosine window with soft skewed paper-glide swell
+            val hann = 0.5 * (1.0 - cos(2.0 * PI * t))
+            val glideShape = 0.35 + 0.65 * exp(-((t - 0.46) / 0.28).let { it * it })
+            val env = hann * glideShape
+
+            val sampleVal = postLp * env
             rawFloat[i] = sampleVal
             val absVal = kotlin.math.abs(sampleVal)
             if (absVal > maxAbs) maxAbs = absVal
         }
 
-        // Gentle peak normalization (~36% full scale so it never sounds loud or noisy)
-        val scale = 11800.0 / maxAbs
+        // Subtle peak normalization (~21% full scale) for whisper-quiet, non-fatiguing feedback
+        val scale = 6800.0 / maxAbs
         for (i in 0 until numSamples) {
             samples[i] = (rawFloat[i] * scale).toInt().coerceIn(-32767, 32767).toShort()
         }

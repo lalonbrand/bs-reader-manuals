@@ -64,6 +64,11 @@ private enum class TurnDirection {
     BACKWARD
 }
 
+private enum class CurlAxis {
+    HORIZONTAL,
+    VERTICAL
+}
+
 private data class Point2D(val x: Float, val y: Float)
 
 @Composable
@@ -90,9 +95,12 @@ fun PageCurlView(
 
     // Interactive curl state (0f = current page flat, 1f = target page turned completely into view)
     var turnDirection by remember { mutableStateOf(TurnDirection.NONE) }
+    var activeCurlAxis by remember { mutableStateOf(CurlAxis.HORIZONTAL) }
+    var cornerAnchorX by remember { mutableFloatStateOf(0f) }
     var cornerAnchorY by remember { mutableFloatStateOf(0f) }
 
     val curlProgress = remember { Animatable(0f) }
+    val curlXRatio = remember { Animatable(0.86f) }
     val curlYRatio = remember { Animatable(0.86f) }
 
     // Full-width landscape vertical scroll & pinch/double-tap zoom state
@@ -161,12 +169,14 @@ fun PageCurlView(
                     )
                 )
             )
+            // True night reading dark mode: luminance-inverting, hue-preserving color matrix
+            // Maps white paper -> deep cosmic #101220, black text -> soft starlight #EBEDFB
             ReaderSurfaceTone.NIGHT -> ColorFilter.colorMatrix(
                 ColorMatrix(
                     floatArrayOf(
-                        0.72f, 0f, 0f, 0f, 0f,
-                        0f, 0.67f, 0f, 0f, 0f,
-                        0f, 0f, 0.58f, 0f, 0f,
+                        0.4936f, -1.2298f, -0.1238f, 0f, 235.3f,
+                        -0.3664f, 0.3698f, -0.1238f, 0f, 237.3f,
+                        -0.3664f, -1.2298f, 0.7362f, 0f, 251.3f,
                         0f, 0f, 0f, 1f, 0f
                     )
                 )
@@ -177,45 +187,13 @@ fun PageCurlView(
     val pageBackdropColor = when (surfaceTone) {
         ReaderSurfaceTone.PAPER -> Color(0xFFFAF4E6)
         ReaderSurfaceTone.SEPIA -> Color(0xFFF0E4C8)
-        ReaderSurfaceTone.NIGHT -> Color(0xFF191512)
+        ReaderSurfaceTone.NIGHT -> Color(0xFF101220)
     }
 
     val backPaperTint = when (surfaceTone) {
         ReaderSurfaceTone.PAPER -> android.graphics.Color.parseColor("#F5EEDB")
         ReaderSurfaceTone.SEPIA -> android.graphics.Color.parseColor("#E9DAC0")
-        ReaderSurfaceTone.NIGHT -> android.graphics.Color.parseColor("#B5AA96")
-    }
-
-    fun triggerAnimatedTurn(direction: TurnDirection) {
-        val idx = latestPageIndex
-        val total = latestPageCount
-        if (viewportSize.width <= 0 || turnDirection != TurnDirection.NONE) return
-        if (direction == TurnDirection.FORWARD && idx >= total - 1) return
-        if (direction == TurnDirection.BACKWARD && idx <= 0) return
-
-        val h = viewportSize.height.toFloat()
-        turnDirection = direction
-        cornerAnchorY = h
-
-        scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            curlProgress.snapTo(0.02f)
-            curlYRatio.snapTo(0.88f)
-            val yAnim = launch {
-                curlYRatio.animateTo(
-                    targetValue = 0.68f,
-                    animationSpec = tween(durationMillis = 420, easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f))
-                )
-            }
-            curlProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 430, easing = CubicBezierEasing(0.22f, 0.61f, 0.36f, 1f))
-            )
-            yAnim.cancel()
-            val nextIdx = if (direction == TurnDirection.FORWARD) idx + 1 else idx - 1
-            latestOnPageChanged(nextIdx)
-            turnDirection = TurnDirection.NONE
-            curlProgress.snapTo(0f)
-        }
+        ReaderSurfaceTone.NIGHT -> android.graphics.Color.parseColor("#1D2236")
     }
 
     Box(
@@ -231,15 +209,17 @@ fun PageCurlView(
                     val firstDown = awaitFirstDown(requireUnconsumed = false)
                     var dragOrigin = firstDown.position
                     var activeDragDir = TurnDirection.NONE
+                    var activeDragAxis = CurlAxis.HORIZONTAL
                     var isVerticalScrolling = false
                     var isZoomPanning = false
                     var isPinching = false
                     var edgeStartMode = false
                     var smoothVx = 0f
+                    var smoothVy = 0f
                     var dragProgress = 0f
                     var passedSlop = false
 
-                    fun mapDragProgress(dir: TurnDirection, posX: Float, w: Float): Float {
+                    fun mapHorizontalDragProgress(dir: TurnDirection, posX: Float, w: Float): Float {
                         return when (dir) {
                             TurnDirection.FORWARD -> {
                                 if (edgeStartMode) {
@@ -261,6 +241,28 @@ fun PageCurlView(
                         }
                     }
 
+                    fun mapVerticalDragProgress(dir: TurnDirection, posY: Float, h: Float): Float {
+                        return when (dir) {
+                            TurnDirection.FORWARD -> {
+                                if (edgeStartMode) {
+                                    ((h - posY) / h).coerceIn(0.005f, 0.995f)
+                                } else {
+                                    val span = dragOrigin.y.coerceAtLeast(h * 0.45f)
+                                    ((dragOrigin.y - posY) / span).coerceIn(0.005f, 0.995f)
+                                }
+                            }
+                            TurnDirection.BACKWARD -> {
+                                if (edgeStartMode) {
+                                    (posY / h).coerceIn(0.005f, 0.995f)
+                                } else {
+                                    val span = (h - dragOrigin.y).coerceAtLeast(h * 0.45f)
+                                    ((posY - dragOrigin.y) / span).coerceIn(0.005f, 0.995f)
+                                }
+                            }
+                            TurnDirection.NONE -> 0f
+                        }
+                    }
+
                     while (true) {
                         val event = awaitPointerEvent()
                         val pressedChanges = event.changes.filter { it.pressed }
@@ -268,14 +270,20 @@ fun PageCurlView(
                         if (pressedChanges.isEmpty()) {
                             if (!isPinching && activeDragDir != TurnDirection.NONE) {
                                 val dir = activeDragDir
+                                val axis = activeDragAxis
                                 val finalProgress = dragProgress
                                 val vx = smoothVx
+                                val vy = smoothVy
                                 activeDragDir = TurnDirection.NONE
 
-                                val shouldComplete = when (dir) {
-                                    TurnDirection.FORWARD -> finalProgress > 0.28f || vx < -6f
-                                    TurnDirection.BACKWARD -> finalProgress > 0.28f || vx > 6f
-                                    TurnDirection.NONE -> false
+                                val shouldComplete = when {
+                                    axis == CurlAxis.VERTICAL && dir == TurnDirection.FORWARD ->
+                                        finalProgress > 0.26f || vy < -6f
+                                    axis == CurlAxis.VERTICAL && dir == TurnDirection.BACKWARD ->
+                                        finalProgress > 0.26f || vy > 6f
+                                    dir == TurnDirection.FORWARD -> finalProgress > 0.28f || vx < -6f
+                                    dir == TurnDirection.BACKWARD -> finalProgress > 0.28f || vx > 6f
+                                    else -> false
                                 }
 
                                 val idx = latestPageIndex
@@ -287,24 +295,45 @@ fun PageCurlView(
                                         stiffness = if (shouldComplete) Spring.StiffnessMediumLow else Spring.StiffnessMedium,
                                         visibilityThreshold = 0.001f
                                     )
-                                    val isTopCorner = cornerAnchorY < viewportSize.height * 0.5f
-                                    val yTarget = when {
-                                        isTopCorner && shouldComplete -> 0.22f
-                                        isTopCorner -> 0.10f
-                                        shouldComplete -> 0.78f
-                                        else -> 0.90f
+                                    if (axis == CurlAxis.VERTICAL) {
+                                        val isLeftCorner = cornerAnchorX < viewportSize.width * 0.5f
+                                        val xTarget = when {
+                                            isLeftCorner && shouldComplete -> 0.30f
+                                            isLeftCorner -> 0.14f
+                                            shouldComplete -> 0.70f
+                                            else -> 0.86f
+                                        }
+                                        val xAnim = launch {
+                                            curlXRatio.animateTo(
+                                                targetValue = xTarget,
+                                                animationSpec = tween(durationMillis = 280)
+                                            )
+                                        }
+                                        curlProgress.animateTo(targetValue = target, animationSpec = settleSpec)
+                                        xAnim.cancel()
+                                    } else {
+                                        val isTopCorner = cornerAnchorY < viewportSize.height * 0.5f
+                                        val yTarget = when {
+                                            isTopCorner && shouldComplete -> 0.22f
+                                            isTopCorner -> 0.10f
+                                            shouldComplete -> 0.78f
+                                            else -> 0.90f
+                                        }
+                                        val yAnim = launch {
+                                            curlYRatio.animateTo(
+                                                targetValue = yTarget,
+                                                animationSpec = tween(durationMillis = 280)
+                                            )
+                                        }
+                                        curlProgress.animateTo(targetValue = target, animationSpec = settleSpec)
+                                        yAnim.cancel()
                                     }
-                                    val yAnim = launch {
-                                        curlYRatio.animateTo(
-                                            targetValue = yTarget,
-                                            animationSpec = tween(durationMillis = 280)
-                                        )
-                                    }
-                                    curlProgress.animateTo(targetValue = target, animationSpec = settleSpec)
-                                    yAnim.cancel()
 
                                     if (shouldComplete) {
                                         val nextIdx = if (dir == TurnDirection.FORWARD) idx + 1 else idx - 1
+                                        scrollY = 0f
+                                        panOffset = Offset.Zero
+                                        zoomScale = 1f
                                         latestOnPageChanged(nextIdx)
                                     }
                                     turnDirection = TurnDirection.NONE
@@ -366,7 +395,10 @@ fun PageCurlView(
                         val w = viewportSize.width.toFloat().coerceAtLeast(1f)
                         val h = viewportSize.height.toFloat().coerceAtLeast(1f)
                         val aspect = latestAspectRatio
-                        val isLandscapeFitWidth = w > h && (w / aspect) > h + 2f
+                        val isLandscapeMode = w > h
+                        val isLandscapeFitWidth = isLandscapeMode && (w / aspect) > h + 2f
+                        val contentH = if (isLandscapeFitWidth) (w / aspect) else h
+                        val minScrollY = -(contentH - h).coerceAtLeast(0f)
 
                         if (!passedSlop) {
                             val totalMove = (change.position - firstDown.position).getDistance()
@@ -381,12 +413,57 @@ fun PageCurlView(
                                 val dxTotal = change.position.x - firstDown.position.x
                                 val dyTotal = change.position.y - firstDown.position.y
                                 val inSideMargin = firstDown.position.x < w * 0.14f || firstDown.position.x > w * 0.86f
+                                val inTopEdge = isLandscapeMode && firstDown.position.y < h * 0.16f
+                                val inBottomEdge = isLandscapeMode && firstDown.position.y > h * 0.84f
 
-                                if (isLandscapeFitWidth && !inSideMargin && abs(dyTotal) > abs(dxTotal) * 1.1f) {
-                                    isVerticalScrolling = true
+                                val idx = latestPageIndex
+                                val total = latestPageCount
+
+                                if (isLandscapeMode && !inSideMargin && abs(dyTotal) > abs(dxTotal) * 1.1f) {
+                                    when {
+                                        // Top edge drag downward turns back
+                                        inTopEdge && dyTotal > 4f && idx > 0 -> {
+                                            edgeStartMode = true
+                                            activeDragDir = TurnDirection.BACKWARD
+                                            activeDragAxis = CurlAxis.VERTICAL
+                                        }
+                                        // Bottom edge drag upward turns forward
+                                        inBottomEdge && dyTotal < -4f && idx < total - 1 -> {
+                                            edgeStartMode = true
+                                            activeDragDir = TurnDirection.FORWARD
+                                            activeDragAxis = CurlAxis.VERTICAL
+                                        }
+                                        // Middle drag downward: scroll up if not at top, else turn back
+                                        dyTotal > 4f && isLandscapeFitWidth && scrollY < -2f -> {
+                                            isVerticalScrolling = true
+                                        }
+                                        // Middle drag upward: scroll down if not at bottom, else turn forward
+                                        dyTotal < -4f && isLandscapeFitWidth && scrollY > minScrollY + 2f -> {
+                                            isVerticalScrolling = true
+                                        }
+                                        // At bottom of page (or page fits screen) -> turn forward from bottom
+                                        dyTotal < -4f && idx < total - 1 -> {
+                                            edgeStartMode = false
+                                            dragOrigin = change.position
+                                            activeDragDir = TurnDirection.FORWARD
+                                            activeDragAxis = CurlAxis.VERTICAL
+                                        }
+                                        // At top of page (or page fits screen) -> turn back from top
+                                        dyTotal > 4f && idx > 0 -> {
+                                            edgeStartMode = false
+                                            dragOrigin = change.position
+                                            activeDragDir = TurnDirection.BACKWARD
+                                            activeDragAxis = CurlAxis.VERTICAL
+                                        }
+                                    }
+
+                                    if (activeDragDir != TurnDirection.NONE) {
+                                        turnDirection = activeDragDir
+                                        activeCurlAxis = activeDragAxis
+                                        cornerAnchorX = firstDown.position.x.coerceIn(w * 0.15f, w * 0.85f)
+                                        smoothVy = delta.y
+                                    }
                                 } else if (turnDirection == TurnDirection.NONE) {
-                                    val idx = latestPageIndex
-                                    val total = latestPageCount
                                     val detectedDir = when {
                                         firstDown.position.x < w * 0.16f && idx > 0 -> {
                                             edgeStartMode = true
@@ -411,7 +488,9 @@ fun PageCurlView(
 
                                     if (detectedDir != TurnDirection.NONE) {
                                         activeDragDir = detectedDir
+                                        activeDragAxis = CurlAxis.HORIZONTAL
                                         turnDirection = detectedDir
+                                        activeCurlAxis = CurlAxis.HORIZONTAL
                                         cornerAnchorY = if (firstDown.position.y < h * 0.42f) 0f else h
                                         smoothVx = delta.x
                                     }
@@ -438,12 +517,22 @@ fun PageCurlView(
                             scrollY = clampedScroll
                         } else if (activeDragDir != TurnDirection.NONE) {
                             change.consume()
-                            smoothVx = smoothVx * 0.55f + delta.x * 0.45f
-                            dragProgress = mapDragProgress(activeDragDir, change.position.x, w)
-                            val yRatio = (change.position.y / h).coerceIn(0.06f, 0.94f)
-                            scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                                curlProgress.snapTo(dragProgress)
-                                curlYRatio.snapTo(yRatio)
+                            if (activeDragAxis == CurlAxis.VERTICAL) {
+                                smoothVy = smoothVy * 0.55f + delta.y * 0.45f
+                                dragProgress = mapVerticalDragProgress(activeDragDir, change.position.y, h)
+                                val xRatio = (change.position.x / w).coerceIn(0.06f, 0.94f)
+                                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                    curlProgress.snapTo(dragProgress)
+                                    curlXRatio.snapTo(xRatio)
+                                }
+                            } else {
+                                smoothVx = smoothVx * 0.55f + delta.x * 0.45f
+                                dragProgress = mapHorizontalDragProgress(activeDragDir, change.position.x, w)
+                                val yRatio = (change.position.y / h).coerceIn(0.06f, 0.94f)
+                                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                    curlProgress.snapTo(dragProgress)
+                                    curlYRatio.snapTo(yRatio)
+                                }
                             }
                         }
                     }
@@ -474,18 +563,8 @@ fun PageCurlView(
                             scrollY = sy
                         }
                     },
-                    onTap = { tapOffset ->
-                        if (zoomScale > 1.05f) {
-                            latestOnCenterTap()
-                            return@detectTapGestures
-                        }
-                        val w = viewportSize.width.toFloat().coerceAtLeast(1f)
-                        val relX = tapOffset.x / w
-                        when {
-                            relX > 0.72f -> triggerAnimatedTurn(TurnDirection.FORWARD)
-                            relX < 0.28f -> triggerAnimatedTurn(TurnDirection.BACKWARD)
-                            else -> latestOnCenterTap()
-                        }
+                    onTap = {
+                        latestOnCenterTap()
                     }
                 )
             }
@@ -523,6 +602,7 @@ fun PageCurlView(
                 val activeScrollY = if (isLandscapeFitWidth) scrollY else 0f
 
                 val effectiveProgress = curlProgress.value.coerceIn(0f, 1f)
+                val effectiveX = (curlXRatio.value * w).coerceIn(0f, w)
                 val effectiveY = (curlYRatio.value * h).coerceIn(0f, h)
 
                 if (turnDirection == TurnDirection.NONE || effectiveProgress <= 0.003f || revealedSheet == null) {
@@ -532,34 +612,63 @@ fun PageCurlView(
                 }
 
                 if (effectiveProgress >= 0.997f) {
-                    drawImageFitted(revealedSheet, w, contentH, activeScrollY, colorFilter)
+                    drawImageFitted(revealedSheet, w, contentH, 0f, colorFilter)
                     drawSpineBindingShadow(w, h)
                     return@Canvas
                 }
 
                 val isBackward = turnDirection == TurnDirection.BACKWARD
-                val corner = Point2D(if (isBackward) 0f else w, cornerAnchorY)
-                val pivotX = if (isBackward) w else 0f
+                val corner: Point2D
+                val clampedPull: Point2D
 
-                val rawPullX = if (isBackward) {
-                    w * (2f * effectiveProgress)
-                } else {
-                    w * (1f - 2f * effectiveProgress)
-                }
-                val rawPullY = if (abs(effectiveY - cornerAnchorY) < 4f) {
-                    if (cornerAnchorY >= h * 0.5f) h - 6f else 6f
-                } else {
-                    effectiveY
-                }
+                if (activeCurlAxis == CurlAxis.VERTICAL) {
+                    val anchorY = if (isBackward) 0f else h
+                    val pivotY = if (isBackward) h else 0f
+                    corner = Point2D(cornerAnchorX, anchorY)
 
-                val clampedPull = clampPullPointToEdge(
-                    rawX = rawPullX,
-                    rawY = rawPullY,
-                    width = w,
-                    height = h,
-                    pivotX = pivotX,
-                    cornerY = cornerAnchorY
-                )
+                    val rawPullY = if (isBackward) {
+                        h * (2f * effectiveProgress)
+                    } else {
+                        h * (1f - 2f * effectiveProgress)
+                    }
+                    val rawPullX = if (abs(effectiveX - cornerAnchorX) < 4f) {
+                        if (cornerAnchorX >= w * 0.5f) cornerAnchorX - 6f else cornerAnchorX + 6f
+                    } else {
+                        effectiveX
+                    }
+
+                    clampedPull = clampPullPointToHorizontalEdge(
+                        rawX = rawPullX,
+                        rawY = rawPullY,
+                        width = w,
+                        height = h,
+                        pivotY = pivotY,
+                        cornerX = cornerAnchorX
+                    )
+                } else {
+                    corner = Point2D(if (isBackward) 0f else w, cornerAnchorY)
+                    val pivotX = if (isBackward) w else 0f
+
+                    val rawPullX = if (isBackward) {
+                        w * (2f * effectiveProgress)
+                    } else {
+                        w * (1f - 2f * effectiveProgress)
+                    }
+                    val rawPullY = if (abs(effectiveY - cornerAnchorY) < 4f) {
+                        if (cornerAnchorY >= h * 0.5f) h - 6f else 6f
+                    } else {
+                        effectiveY
+                    }
+
+                    clampedPull = clampPullPointToEdge(
+                        rawX = rawPullX,
+                        rawY = rawPullY,
+                        width = w,
+                        height = h,
+                        pivotX = pivotX,
+                        cornerY = cornerAnchorY
+                    )
+                }
 
                 val dx = clampedPull.x - corner.x
                 val dy = clampedPull.y - corner.y
@@ -592,6 +701,7 @@ fun PageCurlView(
 
                 val liftFactor = sin(PI * effectiveProgress).toFloat().coerceIn(0f, 1f)
                 val bleedSource = if (isBackward) revealedSheet else flatSheet
+                val bleedScrollY = if (isBackward) 0f else activeScrollY
 
                 drawIntoCanvas { canvas ->
                     val nc = canvas.nativeCanvas
@@ -601,7 +711,7 @@ fun PageCurlView(
                         val underClipPath = exposedUnderPoly.toAndroidPath()
                         nc.save()
                         nc.clipPath(underClipPath)
-                        drawNativeBitmapFitted(nc, revealedSheet, w, contentH, activeScrollY, colorFilter)
+                        drawNativeBitmapFitted(nc, revealedSheet, w, contentH, 0f, colorFilter)
 
                         val shadowDepth = (32.dp.toPx() + 56.dp.toPx() * liftFactor)
                         drawCreaseDirectionalShadow(
@@ -669,13 +779,14 @@ fun PageCurlView(
                         nc.save()
                         nc.concat(reflectMatrix)
                         val bleedPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
-                            alpha = if (surfaceTone == ReaderSurfaceTone.NIGHT) 38 else 46
+                            alpha = if (surfaceTone == ReaderSurfaceTone.NIGHT) 34 else 46
+                            this.colorFilter = colorFilter?.asAndroidColorFilter()
                         }
                         val androidBmp = bleedSource.asAndroidBitmap()
                         nc.drawBitmap(
                             androidBmp,
                             Rect(0, 0, androidBmp.width, androidBmp.height),
-                            Rect(0, activeScrollY.toInt(), w.toInt(), (activeScrollY + contentH).toInt()),
+                            Rect(0, bleedScrollY.toInt(), w.toInt(), (bleedScrollY + contentH).toInt()),
                             bleedPaint
                         )
                         nc.restore()
@@ -738,6 +849,40 @@ private fun clampPullPointToEdge(
         val scale = maxDiag / distOpp
         px = pivotX + dOppX * scale
         py = oppY + dOppY * scale
+    }
+
+    return Point2D(px, py)
+}
+
+private fun clampPullPointToHorizontalEdge(
+    rawX: Float,
+    rawY: Float,
+    width: Float,
+    height: Float,
+    pivotY: Float,
+    cornerX: Float
+): Point2D {
+    var px = rawX
+    var py = rawY
+
+    val dPivotX = px - cornerX
+    val dPivotY = py - pivotY
+    val distPivot = hypot(dPivotX, dPivotY)
+    if (distPivot > height && distPivot > 0.001f) {
+        val scale = height / distPivot
+        px = cornerX + dPivotX * scale
+        py = pivotY + dPivotY * scale
+    }
+
+    val oppX = width - cornerX
+    val maxDiag = hypot(width, height)
+    val dOppX = px - oppX
+    val dOppY = py - pivotY
+    val distOpp = hypot(dOppX, dOppY)
+    if (distOpp > maxDiag && distOpp > 0.001f) {
+        val scale = maxDiag / distOpp
+        px = oppX + dOppX * scale
+        py = pivotY + dOppY * scale
     }
 
     return Point2D(px, py)

@@ -42,3 +42,4 @@ val MutedSlate = Color(0xFF8E96BC)
 
 val ErrorCoral = Color(0xFFFF7A8A)
 val ErrorCoralContainer = Color(0xFF5C1B29)
+
