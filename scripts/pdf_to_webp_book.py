@@ -139,7 +139,7 @@ def main() -> None:
     parser.add_argument("--category", default="Manual")
     parser.add_argument(
         "--base-url",
-        default="https://mrlrajin.github.io/bs-reader-manuals",
+        default="https://lalonbrand.github.io/bs-reader-manuals",
         help="Public base URL where the .zip and cover.webp will be hosted",
     )
     parser.add_argument("--dpi", type=int, default=180)

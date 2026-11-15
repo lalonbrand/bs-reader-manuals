@@ -18,7 +18,7 @@ enum class ReaderSurfaceTone(val label: String) {
     NIGHT("Night")
 }
 
-const val DEFAULT_CATALOG_URL = "https://mrlrajin.github.io/bs-reader-manuals/catalog.json"
+const val DEFAULT_CATALOG_URL = "https://lalonbrand.github.io/bs-reader-manuals/catalog.json"
 
 data class ReaderPreferences(
     val catalogUrl: String = DEFAULT_CATALOG_URL,

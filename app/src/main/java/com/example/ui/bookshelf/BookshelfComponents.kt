@@ -545,7 +545,7 @@ fun CatalogSyncDialog(
                     value = urlText,
                     onValueChange = { urlText = it },
                     label = { Text("catalog.json URL") },
-                    placeholder = { Text("https://mrlrajin.github.io/bs-reader-manuals/catalog.json") },
+                    placeholder = { Text("https://lalonbrand.github.io/bs-reader-manuals/catalog.json") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,
