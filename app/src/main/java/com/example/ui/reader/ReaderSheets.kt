@@ -154,9 +154,11 @@ fun ReaderAppearanceBottomSheet(
     book: BookEntity?,
     surfaceTone: ReaderSurfaceTone,
     showPageOverlay: Boolean,
+    pageSoundEnabled: Boolean,
     currentPageFile: File?,
     onSelectTone: (ReaderSurfaceTone) -> Unit,
     onTogglePageOverlay: (Boolean) -> Unit,
+    onTogglePageSound: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(
@@ -219,6 +221,29 @@ fun ReaderAppearanceBottomSheet(
                     checked = showPageOverlay,
                     onCheckedChange = onTogglePageOverlay,
                     modifier = Modifier.testTag("overlay_toggle_switch")
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Soft Page-Turn Sound",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Subtle paper sound effect when turning pages",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = pageSoundEnabled,
+                    onCheckedChange = onTogglePageSound,
+                    modifier = Modifier.testTag("page_sound_toggle_switch")
                 )
             }
 

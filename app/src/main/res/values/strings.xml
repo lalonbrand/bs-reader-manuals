@@ -18,5 +18,8 @@
     <string name="cd_sync_catalog">Fetch remote catalog.json</string>
     <string name="cd_import_zip">Import local zip archive</string>
     <string name="cd_app_credits">About BS Reader and credits</string>
+    <string name="action_rotate_landscape">Landscape</string>
+    <string name="action_rotate_portrait">Portrait</string>
+    <string name="cd_toggle_rotation">Toggle portrait and landscape orientation</string>
     <string name="app_credit">Mohidur Rahman Lalon | AQC-10th Phase | GMS Composite Knitting Ind. Ltd. |</string>
 </resources>

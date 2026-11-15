@@ -23,7 +23,8 @@ const val DEFAULT_CATALOG_URL = "https://lalonbrand.github.io/bs-reader-manuals/
 data class ReaderPreferences(
     val catalogUrl: String = DEFAULT_CATALOG_URL,
     val surfaceTone: ReaderSurfaceTone = ReaderSurfaceTone.PAPER,
-    val showPageOverlay: Boolean = true
+    val showPageOverlay: Boolean = true,
+    val pageSoundEnabled: Boolean = true
 )
 
 class SettingsDataStore(private val context: Context) {
@@ -31,6 +32,7 @@ class SettingsDataStore(private val context: Context) {
         val CATALOG_URL = stringPreferencesKey("catalog_url")
         val SURFACE_TONE = stringPreferencesKey("surface_tone")
         val SHOW_PAGE_OVERLAY = booleanPreferencesKey("show_page_overlay")
+        val PAGE_SOUND_ENABLED = booleanPreferencesKey("page_sound_enabled")
     }
 
     val preferences: Flow<ReaderPreferences> = context.folioSettingsStore.data.map { prefs ->
@@ -40,7 +42,8 @@ class SettingsDataStore(private val context: Context) {
         ReaderPreferences(
             catalogUrl = prefs[Keys.CATALOG_URL]?.takeIf { it.isNotBlank() } ?: DEFAULT_CATALOG_URL,
             surfaceTone = tone,
-            showPageOverlay = prefs[Keys.SHOW_PAGE_OVERLAY] ?: true
+            showPageOverlay = prefs[Keys.SHOW_PAGE_OVERLAY] ?: true,
+            pageSoundEnabled = prefs[Keys.PAGE_SOUND_ENABLED] ?: true
         )
     }
 
@@ -54,5 +57,9 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setShowPageOverlay(show: Boolean) {
         context.folioSettingsStore.edit { it[Keys.SHOW_PAGE_OVERLAY] = show }
+    }
+
+    suspend fun setPageSoundEnabled(enabled: Boolean) {
+        context.folioSettingsStore.edit { it[Keys.PAGE_SOUND_ENABLED] = enabled }
     }
 }

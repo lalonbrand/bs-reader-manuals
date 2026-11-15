@@ -11,9 +11,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,6 +32,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -41,7 +45,9 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.data.local.ReaderSurfaceTone
@@ -64,6 +70,7 @@ private data class Point2D(val x: Float, val y: Float)
 fun PageCurlView(
     currentPageIndex: Int,
     pageCount: Int,
+    pageAspectRatio: Float,
     currentBitmap: ImageBitmap?,
     nextBitmap: ImageBitmap?,
     prevBitmap: ImageBitmap?,
@@ -77,6 +84,7 @@ fun PageCurlView(
 
     val latestPageIndex by rememberUpdatedState(currentPageIndex)
     val latestPageCount by rememberUpdatedState(pageCount)
+    val latestAspectRatio by rememberUpdatedState(pageAspectRatio.coerceIn(0.4f, 1.8f))
     val latestOnPageChanged by rememberUpdatedState(onPageChanged)
     val latestOnCenterTap by rememberUpdatedState(onCenterTap)
 
@@ -87,15 +95,56 @@ fun PageCurlView(
     val curlProgress = remember { Animatable(0f) }
     val curlYRatio = remember { Animatable(0.86f) }
 
-    // Zoom state (double-tap or pinch)
+    // Full-width landscape vertical scroll & pinch/double-tap zoom state
+    var scrollY by remember { mutableFloatStateOf(0f) }
     var zoomScale by remember { mutableFloatStateOf(1f) }
     var panOffset by remember { mutableStateOf(Offset.Zero) }
 
-    // Reset zoom when page changes
+    fun clampZoomAndPan(
+        candidateScale: Float,
+        candidatePan: Offset,
+        candidateScrollY: Float
+    ): Triple<Float, Offset, Float> {
+        val w = viewportSize.width.toFloat().coerceAtLeast(1f)
+        val h = viewportSize.height.toFloat().coerceAtLeast(1f)
+        val aspect = latestAspectRatio
+        val isLandscapeFitWidth = w > h && (w / aspect) > h + 2f
+        val contentH = if (isLandscapeFitWidth) (w / aspect) else h
+        val minScrollY = -(contentH - h).coerceAtLeast(0f)
+
+        val clampedScale = candidateScale.coerceIn(1f, 4.5f)
+        if (clampedScale <= 1.02f) {
+            // Fold any residual Y pan back into scrollY so returning to 1x keeps reading position
+            val mergedScroll = (candidateScrollY + candidatePan.y).coerceIn(minScrollY, 0f)
+            return Triple(1f, Offset.Zero, mergedScroll)
+        }
+
+        val clampedScroll = candidateScrollY.coerceIn(minScrollY, 0f)
+        val maxPanX = (w * (clampedScale - 1f)) / 2f
+        val maxPanY = ((h * 0.5f - clampedScroll) * clampedScale - h * 0.5f).coerceAtLeast(0f)
+        val minPanY = (h * 0.5f - (clampedScroll + contentH - h * 0.5f) * clampedScale).coerceAtMost(0f)
+
+        val clampedPan = Offset(
+            x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
+            y = candidatePan.y.coerceIn(minPanY, maxPanY)
+        )
+        return Triple(clampedScale, clampedPan, clampedScroll)
+    }
+
+    // Reset zoom & vertical page scroll when moving to a different page
     LaunchedEffect(currentPageIndex) {
-        if (zoomScale != 1f) {
-            zoomScale = 1f
-            panOffset = Offset.Zero
+        zoomScale = 1f
+        panOffset = Offset.Zero
+        scrollY = 0f
+    }
+
+    // Re-clamp offsets whenever orientation or viewport dimensions change
+    LaunchedEffect(viewportSize, pageAspectRatio) {
+        if (viewportSize.width > 0 && viewportSize.height > 0) {
+            val (s, p, sy) = clampZoomAndPan(zoomScale, panOffset, scrollY)
+            zoomScale = s
+            panOffset = p
+            scrollY = sy
         }
     }
 
@@ -173,170 +222,55 @@ fun PageCurlView(
         modifier = modifier
             .fillMaxSize()
             .background(pageBackdropColor)
+            .clipToBounds()
             .onSizeChanged { viewportSize = it }
-            .pointerInput(zoomScale) {
-                detectTapGestures(
-                    onDoubleTap = { tapOffset ->
-                        if (zoomScale > 1.05f) {
-                            zoomScale = 1f
-                            panOffset = Offset.Zero
-                        } else {
-                            zoomScale = 2.1f
-                            val cx = viewportSize.width / 2f
-                            val cy = viewportSize.height / 2f
-                            panOffset = Offset(
-                                x = (cx - tapOffset.x) * 0.9f,
-                                y = (cy - tapOffset.y) * 0.9f
-                            )
-                        }
-                    },
-                    onTap = { tapOffset ->
-                        if (zoomScale > 1.05f) {
-                            latestOnCenterTap()
-                            return@detectTapGestures
-                        }
-                        val w = viewportSize.width.toFloat().coerceAtLeast(1f)
-                        val relX = tapOffset.x / w
-                        when {
-                            relX > 0.72f -> triggerAnimatedTurn(TurnDirection.FORWARD)
-                            relX < 0.28f -> triggerAnimatedTurn(TurnDirection.BACKWARD)
-                            else -> latestOnCenterTap()
+            // Primary multi-touch pinch-to-zoom, zoomed pan, landscape vertical scroll, and single-finger page curl
+            .pointerInput(viewportSize) {
+                val touchSlop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    var dragOrigin = firstDown.position
+                    var activeDragDir = TurnDirection.NONE
+                    var isVerticalScrolling = false
+                    var isZoomPanning = false
+                    var isPinching = false
+                    var edgeStartMode = false
+                    var smoothVx = 0f
+                    var dragProgress = 0f
+                    var passedSlop = false
+
+                    fun mapDragProgress(dir: TurnDirection, posX: Float, w: Float): Float {
+                        return when (dir) {
+                            TurnDirection.FORWARD -> {
+                                if (edgeStartMode) {
+                                    ((w - posX) / w).coerceIn(0.005f, 0.995f)
+                                } else {
+                                    val span = dragOrigin.x.coerceAtLeast(w * 0.45f)
+                                    ((dragOrigin.x - posX) / span).coerceIn(0.005f, 0.995f)
+                                }
+                            }
+                            TurnDirection.BACKWARD -> {
+                                if (edgeStartMode) {
+                                    (posX / w).coerceIn(0.005f, 0.995f)
+                                } else {
+                                    val span = (w - dragOrigin.x).coerceAtLeast(w * 0.45f)
+                                    ((posX - dragOrigin.x) / span).coerceIn(0.005f, 0.995f)
+                                }
+                            }
+                            TurnDirection.NONE -> 0f
                         }
                     }
-                )
-            }
-            .then(
-                if (zoomScale > 1.05f) {
-                    Modifier.pointerInput(zoomScale) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            val nextScale = (zoomScale * zoom).coerceIn(1f, 3.5f)
-                            zoomScale = nextScale
-                            if (nextScale <= 1.02f) {
-                                zoomScale = 1f
-                                panOffset = Offset.Zero
-                            } else {
-                                val maxPanX = (viewportSize.width * (nextScale - 1f)) / 2f
-                                val maxPanY = (viewportSize.height * (nextScale - 1f)) / 2f
-                                panOffset = Offset(
-                                    x = (panOffset.x + pan.x).coerceIn(-maxPanX, maxPanX),
-                                    y = (panOffset.y + pan.y).coerceIn(-maxPanY, maxPanY)
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Modifier.pointerInput(viewportSize) {
-                        var activeDragDir = TurnDirection.NONE
-                        var dragOrigin = Offset.Zero
-                        var edgeStartMode = false
-                        var smoothVx = 0f
-                        var dragProgress = 0f
 
-                        fun mapDragProgress(dir: TurnDirection, posX: Float, w: Float): Float {
-                            return when (dir) {
-                                TurnDirection.FORWARD -> {
-                                    if (edgeStartMode) {
-                                        ((w - posX) / w).coerceIn(0.005f, 0.995f)
-                                    } else {
-                                        val span = dragOrigin.x.coerceAtLeast(w * 0.45f)
-                                        ((dragOrigin.x - posX) / span).coerceIn(0.005f, 0.995f)
-                                    }
-                                }
-                                TurnDirection.BACKWARD -> {
-                                    if (edgeStartMode) {
-                                        (posX / w).coerceIn(0.005f, 0.995f)
-                                    } else {
-                                        val span = (w - dragOrigin.x).coerceAtLeast(w * 0.45f)
-                                        ((posX - dragOrigin.x) / span).coerceIn(0.005f, 0.995f)
-                                    }
-                                }
-                                TurnDirection.NONE -> 0f
-                            }
-                        }
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressedChanges = event.changes.filter { it.pressed }
 
-                        detectDragGestures(
-                            onDragStart = { startOffset ->
-                                if (viewportSize.width <= 0 || turnDirection != TurnDirection.NONE) {
-                                    activeDragDir = TurnDirection.NONE
-                                    return@detectDragGestures
-                                }
-                                val w = viewportSize.width.toFloat()
-                                val h = viewportSize.height.toFloat()
-                                val idx = latestPageIndex
-                                val total = latestPageCount
-
-                                dragOrigin = startOffset
-                                smoothVx = 0f
-                                dragProgress = 0f
-                                edgeStartMode = false
-
-                                val initialDir = when {
-                                    startOffset.x < w * 0.16f && idx > 0 -> {
-                                        edgeStartMode = true
-                                        TurnDirection.BACKWARD
-                                    }
-                                    startOffset.x > w * 0.84f && idx < total - 1 -> {
-                                        edgeStartMode = true
-                                        TurnDirection.FORWARD
-                                    }
-                                    else -> TurnDirection.NONE
-                                }
-
-                                activeDragDir = initialDir
-                                if (initialDir != TurnDirection.NONE) {
-                                    turnDirection = initialDir
-                                    cornerAnchorY = if (startOffset.y < h * 0.42f) 0f else h
-                                    dragProgress = mapDragProgress(initialDir, startOffset.x, w)
-                                    val yRatio = (startOffset.y / h).coerceIn(0.06f, 0.94f)
-                                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                                        curlProgress.snapTo(dragProgress)
-                                        curlYRatio.snapTo(yRatio)
-                                    }
-                                }
-                            },
-                            onDrag = { change, dragAmount ->
-                                val w = viewportSize.width.toFloat().coerceAtLeast(1f)
-                                val h = viewportSize.height.toFloat().coerceAtLeast(1f)
-                                val idx = latestPageIndex
-                                val total = latestPageCount
-
-                                smoothVx = smoothVx * 0.55f + dragAmount.x * 0.45f
-
-                                // If drag started in the center zone, lock direction once horizontal intent is clear
-                                if (activeDragDir == TurnDirection.NONE) {
-                                    if (turnDirection != TurnDirection.NONE) return@detectDragGestures
-                                    val totalDx = change.position.x - dragOrigin.x
-                                    val detected = when {
-                                        totalDx < -6f && idx < total - 1 -> TurnDirection.FORWARD
-                                        totalDx > 6f && idx > 0 -> TurnDirection.BACKWARD
-                                        else -> TurnDirection.NONE
-                                    }
-                                    if (detected != TurnDirection.NONE) {
-                                        activeDragDir = detected
-                                        edgeStartMode = false
-                                        dragOrigin = change.position
-                                        turnDirection = detected
-                                        cornerAnchorY = if (change.position.y < h * 0.42f) 0f else h
-                                    } else {
-                                        return@detectDragGestures
-                                    }
-                                }
-
-                                change.consume()
-                                dragProgress = mapDragProgress(activeDragDir, change.position.x, w)
-                                val yRatio = (change.position.y / h).coerceIn(0.06f, 0.94f)
-                                scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                                    curlProgress.snapTo(dragProgress)
-                                    curlYRatio.snapTo(yRatio)
-                                }
-                            },
-                            onDragEnd = {
+                        if (pressedChanges.isEmpty()) {
+                            if (!isPinching && activeDragDir != TurnDirection.NONE) {
                                 val dir = activeDragDir
                                 val finalProgress = dragProgress
                                 val vx = smoothVx
                                 activeDragDir = TurnDirection.NONE
-
-                                if (dir == TurnDirection.NONE) return@detectDragGestures
 
                                 val shouldComplete = when (dir) {
                                     TurnDirection.FORWARD -> finalProgress > 0.28f || vx < -6f
@@ -376,28 +310,185 @@ fun PageCurlView(
                                     turnDirection = TurnDirection.NONE
                                     curlProgress.snapTo(0f)
                                 }
-                            },
-                            onDragCancel = {
-                                val dir = activeDragDir
-                                activeDragDir = TurnDirection.NONE
-                                if (dir != TurnDirection.NONE) {
+                            }
+                            break
+                        }
+
+                        // Handle 2+ fingers: standard image pinch-to-zoom around finger centroid + pan
+                        if (pressedChanges.size >= 2) {
+                            if (!isPinching) {
+                                isPinching = true
+                                passedSlop = true
+                                isVerticalScrolling = false
+                                isZoomPanning = false
+                                if (activeDragDir != TurnDirection.NONE) {
+                                    activeDragDir = TurnDirection.NONE
                                     scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                                        curlProgress.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = 0.9f,
-                                                stiffness = Spring.StiffnessMedium,
-                                                visibilityThreshold = 0.001f
-                                            )
-                                        )
+                                        curlProgress.snapTo(0f)
                                         turnDirection = TurnDirection.NONE
                                     }
                                 }
                             }
-                        )
+
+                            val zoomChange = event.calculateZoom()
+                            val panChange = event.calculatePan()
+                            val centroid = event.calculateCentroid(useCurrent = false)
+                            if (centroid != Offset.Unspecified) {
+                                val w = viewportSize.width.toFloat().coerceAtLeast(1f)
+                                val h = viewportSize.height.toFloat().coerceAtLeast(1f)
+                                val center = Offset(w / 2f, h / 2f)
+                                val oldZoom = zoomScale
+                                val newZoom = (oldZoom * zoomChange).coerceIn(1f, 4.5f)
+                                val zoomFactor = if (oldZoom > 0f) newZoom / oldZoom else 1f
+                                val c = centroid - center
+                                val rawPan = panOffset * zoomFactor + panChange + c * (1f - zoomFactor)
+
+                                val (clampedZoom, clampedPan, clampedScroll) = clampZoomAndPan(
+                                    candidateScale = newZoom,
+                                    candidatePan = rawPan,
+                                    candidateScrollY = scrollY
+                                )
+                                zoomScale = clampedZoom
+                                panOffset = clampedPan
+                                scrollY = clampedScroll
+                            }
+                            event.changes.forEach { it.consume() }
+                            continue
+                        }
+
+                        // Ignore trailing single-finger lift right after pinching so it doesn't turn a page
+                        if (isPinching) {
+                            continue
+                        }
+
+                        val change = pressedChanges.first()
+                        val delta = change.positionChange()
+                        val w = viewportSize.width.toFloat().coerceAtLeast(1f)
+                        val h = viewportSize.height.toFloat().coerceAtLeast(1f)
+                        val aspect = latestAspectRatio
+                        val isLandscapeFitWidth = w > h && (w / aspect) > h + 2f
+
+                        if (!passedSlop) {
+                            val totalMove = (change.position - firstDown.position).getDistance()
+                            if (totalMove < touchSlop) {
+                                continue
+                            }
+                            passedSlop = true
+
+                            if (zoomScale > 1.02f) {
+                                isZoomPanning = true
+                            } else {
+                                val dxTotal = change.position.x - firstDown.position.x
+                                val dyTotal = change.position.y - firstDown.position.y
+                                val inSideMargin = firstDown.position.x < w * 0.14f || firstDown.position.x > w * 0.86f
+
+                                if (isLandscapeFitWidth && !inSideMargin && abs(dyTotal) > abs(dxTotal) * 1.1f) {
+                                    isVerticalScrolling = true
+                                } else if (turnDirection == TurnDirection.NONE) {
+                                    val idx = latestPageIndex
+                                    val total = latestPageCount
+                                    val detectedDir = when {
+                                        firstDown.position.x < w * 0.16f && idx > 0 -> {
+                                            edgeStartMode = true
+                                            TurnDirection.BACKWARD
+                                        }
+                                        firstDown.position.x > w * 0.84f && idx < total - 1 -> {
+                                            edgeStartMode = true
+                                            TurnDirection.FORWARD
+                                        }
+                                        dxTotal < -4f && idx < total - 1 -> {
+                                            edgeStartMode = false
+                                            dragOrigin = change.position
+                                            TurnDirection.FORWARD
+                                        }
+                                        dxTotal > 4f && idx > 0 -> {
+                                            edgeStartMode = false
+                                            dragOrigin = change.position
+                                            TurnDirection.BACKWARD
+                                        }
+                                        else -> TurnDirection.NONE
+                                    }
+
+                                    if (detectedDir != TurnDirection.NONE) {
+                                        activeDragDir = detectedDir
+                                        turnDirection = detectedDir
+                                        cornerAnchorY = if (firstDown.position.y < h * 0.42f) 0f else h
+                                        smoothVx = delta.x
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isZoomPanning) {
+                            change.consume()
+                            val (_, clampedPan, clampedScroll) = clampZoomAndPan(
+                                candidateScale = zoomScale,
+                                candidatePan = panOffset + delta,
+                                candidateScrollY = scrollY
+                            )
+                            panOffset = clampedPan
+                            scrollY = clampedScroll
+                        } else if (isVerticalScrolling) {
+                            change.consume()
+                            val (_, _, clampedScroll) = clampZoomAndPan(
+                                candidateScale = 1f,
+                                candidatePan = Offset.Zero,
+                                candidateScrollY = scrollY + delta.y
+                            )
+                            scrollY = clampedScroll
+                        } else if (activeDragDir != TurnDirection.NONE) {
+                            change.consume()
+                            smoothVx = smoothVx * 0.55f + delta.x * 0.45f
+                            dragProgress = mapDragProgress(activeDragDir, change.position.x, w)
+                            val yRatio = (change.position.y / h).coerceIn(0.06f, 0.94f)
+                            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                curlProgress.snapTo(dragProgress)
+                                curlYRatio.snapTo(yRatio)
+                            }
+                        }
                     }
                 }
-            )
+            }
+            // Secondary tap/double-tap detector (only fires when pointer wasn't consumed by pinch/drag)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = { tapOffset ->
+                        if (zoomScale > 1.05f) {
+                            val (s, p, sy) = clampZoomAndPan(1f, panOffset, scrollY)
+                            zoomScale = s
+                            panOffset = p
+                            scrollY = sy
+                        } else {
+                            val w = viewportSize.width.toFloat().coerceAtLeast(1f)
+                            val h = viewportSize.height.toFloat().coerceAtLeast(1f)
+                            val targetZoom = 2.2f
+                            val cx = w / 2f
+                            val cy = h / 2f
+                            val rawPan = Offset(
+                                x = (cx - tapOffset.x) * (targetZoom - 1f),
+                                y = (cy - tapOffset.y) * (targetZoom - 1f)
+                            )
+                            val (s, p, sy) = clampZoomAndPan(targetZoom, rawPan, scrollY)
+                            zoomScale = s
+                            panOffset = p
+                            scrollY = sy
+                        }
+                    },
+                    onTap = { tapOffset ->
+                        if (zoomScale > 1.05f) {
+                            latestOnCenterTap()
+                            return@detectTapGestures
+                        }
+                        val w = viewportSize.width.toFloat().coerceAtLeast(1f)
+                        val relX = tapOffset.x / w
+                        when {
+                            relX > 0.72f -> triggerAnimatedTurn(TurnDirection.FORWARD)
+                            relX < 0.28f -> triggerAnimatedTurn(TurnDirection.BACKWARD)
+                            else -> latestOnCenterTap()
+                        }
+                    }
+                )
+            }
     ) {
         if (currentBitmap == null) {
             CircularProgressIndicator(
@@ -426,17 +517,22 @@ fun PageCurlView(
                 val h = size.height
                 if (w <= 0f || h <= 0f) return@Canvas
 
+                val aspect = latestAspectRatio
+                val isLandscapeFitWidth = w > h && (w / aspect) > h + 2f
+                val contentH = if (isLandscapeFitWidth) (w / aspect) else h
+                val activeScrollY = if (isLandscapeFitWidth) scrollY else 0f
+
                 val effectiveProgress = curlProgress.value.coerceIn(0f, 1f)
                 val effectiveY = (curlYRatio.value * h).coerceIn(0f, h)
 
                 if (turnDirection == TurnDirection.NONE || effectiveProgress <= 0.003f || revealedSheet == null) {
-                    drawImageFitted(flatSheet, w, h, colorFilter)
+                    drawImageFitted(flatSheet, w, contentH, activeScrollY, colorFilter)
                     drawSpineBindingShadow(w, h)
                     return@Canvas
                 }
 
                 if (effectiveProgress >= 0.997f) {
-                    drawImageFitted(revealedSheet, w, h, colorFilter)
+                    drawImageFitted(revealedSheet, w, contentH, activeScrollY, colorFilter)
                     drawSpineBindingShadow(w, h)
                     return@Canvas
                 }
@@ -445,8 +541,6 @@ fun PageCurlView(
                 val corner = Point2D(if (isBackward) 0f else w, cornerAnchorY)
                 val pivotX = if (isBackward) w else 0f
 
-                // Forward: corner sweeps from +w -> -w
-                // Backward: corner sweeps symmetrically from 0 -> +2w
                 val rawPullX = if (isBackward) {
                     w * (2f * effectiveProgress)
                 } else {
@@ -472,7 +566,7 @@ fun PageCurlView(
                 val dist = hypot(dx, dy)
 
                 if (dist < 2f) {
-                    drawImageFitted(flatSheet, w, h, colorFilter)
+                    drawImageFitted(flatSheet, w, contentH, activeScrollY, colorFilter)
                     drawSpineBindingShadow(w, h)
                     return@Canvas
                 }
@@ -489,11 +583,8 @@ fun PageCurlView(
                     Point2D(0f, h)
                 )
 
-                // Flat remaining region of current page: (P - M) . n >= 0
                 val flatFrontPoly = clipPolygonHalfPlane(pageRect, midX, midY, nx, ny, keepPositive = true)
-                // Revealed region of incoming (next or prev) page: (P - M) . n <= 0
                 val exposedUnderPoly = clipPolygonHalfPlane(pageRect, midX, midY, nx, ny, keepPositive = false)
-                // Reflected curled flap polygon on top
                 val backFacePoly = exposedUnderPoly.map { pt ->
                     val signed = (pt.x - midX) * nx + (pt.y - midY) * ny
                     Point2D(pt.x - 2f * signed * nx, pt.y - 2f * signed * ny)
@@ -510,9 +601,8 @@ fun PageCurlView(
                         val underClipPath = exposedUnderPoly.toAndroidPath()
                         nc.save()
                         nc.clipPath(underClipPath)
-                        drawNativeBitmapFitted(nc, revealedSheet, w, h, colorFilter)
+                        drawNativeBitmapFitted(nc, revealedSheet, w, contentH, activeScrollY, colorFilter)
 
-                        // Cast shadow from the lifted curl fold onto the revealed sheet
                         val shadowDepth = (32.dp.toPx() + 56.dp.toPx() * liftFactor)
                         drawCreaseDirectionalShadow(
                             canvas = nc,
@@ -534,9 +624,8 @@ fun PageCurlView(
                         val frontClipPath = flatFrontPoly.toAndroidPath()
                         nc.save()
                         nc.clipPath(frontClipPath)
-                        drawNativeBitmapFitted(nc, flatSheet, w, h, colorFilter)
+                        drawNativeBitmapFitted(nc, flatSheet, w, contentH, activeScrollY, colorFilter)
 
-                        // Ambient occlusion drop shadow cast by the curled flap onto the flat sheet
                         if (backFacePoly.size >= 3) {
                             val flapShadowDepth = (22.dp.toPx() + 42.dp.toPx() * liftFactor)
                             drawCreaseDirectionalShadow(
@@ -567,7 +656,6 @@ fun PageCurlView(
                         }
                         nc.drawPath(backFacePath, paperPaint)
 
-                        // Reflected ink bleed-through across fold line
                         val dot = midX * nx + midY * ny
                         val reflectMatrix = Matrix().apply {
                             setValues(
@@ -587,12 +675,11 @@ fun PageCurlView(
                         nc.drawBitmap(
                             androidBmp,
                             Rect(0, 0, androidBmp.width, androidBmp.height),
-                            Rect(0, 0, w.toInt(), h.toInt()),
+                            Rect(0, activeScrollY.toInt(), w.toInt(), (activeScrollY + contentH).toInt()),
                             bleedPaint
                         )
                         nc.restore()
 
-                        // Cylindrical specular ridge highlight + crease valley shadow
                         val curlCylinderWidth = (44.dp.toPx() + 68.dp.toPx() * liftFactor)
                         drawCylinderCurlHighlight(
                             canvas = nc,
@@ -606,7 +693,6 @@ fun PageCurlView(
                             boundsH = h
                         )
 
-                        // Crisp subtle edge rim along curled flap border
                         val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                             style = Paint.Style.STROKE
                             strokeWidth = 1.5f
@@ -634,7 +720,6 @@ private fun clampPullPointToEdge(
     var px = rawX
     var py = rawY
 
-    // Constraint 1: distance from opposite-edge pivot (pivotX, cornerY) <= width
     val dPivotX = px - pivotX
     val dPivotY = py - cornerY
     val distPivot = hypot(dPivotX, dPivotY)
@@ -644,7 +729,6 @@ private fun clampPullPointToEdge(
         py = cornerY + dPivotY * scale
     }
 
-    // Constraint 2: distance from diagonal opposite corner (pivotX, height - cornerY) <= diagonal
     val oppY = height - cornerY
     val maxDiag = hypot(width, height)
     val dOppX = px - pivotX
@@ -714,12 +798,14 @@ private fun List<Point2D>.toAndroidPath(): Path {
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawImageFitted(
     bitmap: ImageBitmap,
     w: Float,
-    h: Float,
+    contentH: Float,
+    scrollY: Float,
     colorFilter: ColorFilter?
 ) {
     drawImage(
         image = bitmap,
-        dstSize = IntSize(w.toInt(), h.toInt()),
+        dstOffset = IntOffset(0, scrollY.toInt()),
+        dstSize = IntSize(w.toInt(), contentH.toInt()),
         colorFilter = colorFilter
     )
 }
@@ -728,7 +814,8 @@ private fun drawNativeBitmapFitted(
     canvas: android.graphics.Canvas,
     bitmap: ImageBitmap,
     w: Float,
-    h: Float,
+    contentH: Float,
+    scrollY: Float,
     colorFilter: ColorFilter?
 ) {
     val bmp = bitmap.asAndroidBitmap()
@@ -738,7 +825,7 @@ private fun drawNativeBitmapFitted(
     canvas.drawBitmap(
         bmp,
         Rect(0, 0, bmp.width, bmp.height),
-        Rect(0, 0, w.toInt(), h.toInt()),
+        Rect(0, scrollY.toInt(), w.toInt(), (scrollY + contentH).toInt()),
         paint
     )
 }

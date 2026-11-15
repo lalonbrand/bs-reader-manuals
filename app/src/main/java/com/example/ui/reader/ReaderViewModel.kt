@@ -32,6 +32,7 @@ data class ReaderUiState(
     val pageAspectRatio: Float = 1080f / 1520f,
     val surfaceTone: ReaderSurfaceTone = ReaderSurfaceTone.PAPER,
     val showPageOverlay: Boolean = true,
+    val pageSoundEnabled: Boolean = true,
     val isLoading: Boolean = true,
     val errorMessage: String? = null
 )
@@ -53,7 +54,8 @@ class ReaderViewModel(
                 _uiState.update {
                     it.copy(
                         surfaceTone = prefs.surfaceTone,
-                        showPageOverlay = prefs.showPageOverlay
+                        showPageOverlay = prefs.showPageOverlay,
+                        pageSoundEnabled = prefs.pageSoundEnabled
                     )
                 }
             }
@@ -155,6 +157,12 @@ class ReaderViewModel(
     fun setShowPageOverlay(show: Boolean) {
         viewModelScope.launch {
             settingsStore.setShowPageOverlay(show)
+        }
+    }
+
+    fun setPageSoundEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setPageSoundEnabled(enabled)
         }
     }
 
