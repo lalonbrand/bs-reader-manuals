@@ -259,17 +259,29 @@ fun BookshelfScreen(
                                         .padding(top = 8.dp)
                                         .glassPanel(shape = RoundedCornerShape(18.dp))
                                         .testTag("app_credit_footer")
+                                        .minimumInteractiveComponentSize()
                                         .clickable { showCreditsDialog = true }
                                 ) {
-                                    Text(
-                                        text = stringResource(R.string.app_credit),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = TextAlign.Center,
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 12.dp)
-                                    )
+                                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.credit_footer_title),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        Text(
+                                            text = stringResource(R.string.credit_footer_subtitle),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -301,7 +313,7 @@ fun BookshelfScreen(
     }
 
     if (showCreditsDialog) {
-        AppCreditsDialog(onDismiss = { showCreditsDialog = false })
+        AppCreditsBottomSheet(onDismiss = { showCreditsDialog = false })
     }
 
     bookPendingDelete?.let { target ->
@@ -365,6 +377,7 @@ private fun BookshelfHeader(
                     modifier = Modifier
                         .size(48.dp)
                         .glassPanel(shape = RoundedCornerShape(15.dp))
+                        .testTag("header_credits_button")
                         .clickable(onClick = onCreditsClick),
                     contentAlignment = Alignment.Center
                 ) {

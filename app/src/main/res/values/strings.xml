@@ -23,5 +23,16 @@
     <string name="cd_toggle_rotation">Toggle portrait and landscape orientation</string>
     <string name="cd_notifications">Document notifications</string>
     <string name="cd_delete_notification">Delete notification</string>
-    <string name="app_credit">Mohidur Rahman Lalon | AQC-10th Phase | GMS Composite Knitting Ind. Ltd. |</string>
+    <string name="app_credit">Mohidur Rahman Lalon • AQC – 10th Phase • GMS Composite Knitting Ind. Ltd.</string>
+    <string name="credit_role_label">DESIGNED &amp; DEVELOPED BY</string>
+    <string name="credit_author_name">Mohidur Rahman Lalon</string>
+    <string name="credit_author_initials">MRL</string>
+    <string name="credit_batch_label">Program / Phase</string>
+    <string name="credit_batch_value">AQC – 10th Phase</string>
+    <string name="credit_company_label">Organization</string>
+    <string name="credit_company_value">GMS Composite Knitting Ind. Ltd.</string>
+    <string name="credit_purpose">BESTSELLER Digital Quality &amp; Technical Manuals</string>
+    <string name="credit_footer_title">BS Reader • GMS Composite Knitting Ind. Ltd.</string>
+    <string name="credit_footer_subtitle">Curated by Mohidur Rahman Lalon • AQC – 10th Phase</string>
+    <string name="credit_version_badge">BS Reader • v%1$s • © 2026</string>
 </resources>

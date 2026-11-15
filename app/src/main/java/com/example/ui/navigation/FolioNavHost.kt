@@ -5,7 +5,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -21,37 +28,45 @@ import com.example.ui.reader.ReaderViewModel
 fun FolioNavHost() {
     val navController = rememberNavController()
     val application = LocalContext.current.applicationContext as Application
+    var showLaunchSignature by rememberSaveable { mutableStateOf(true) }
 
-    NavHost(
-        navController = navController,
-        startDestination = BookshelfRoute,
-        enterTransition = { fadeIn() + slideInHorizontally { it / 10 } },
-        exitTransition = { fadeOut() },
-        popEnterTransition = { fadeIn() },
-        popExitTransition = { fadeOut() + slideOutHorizontally { it / 10 } }
-    ) {
-        composable<BookshelfRoute> {
-            val viewModel: BookshelfViewModel = viewModel(
-                factory = BookshelfViewModel.Factory(application)
-            )
-            BookshelfScreen(
-                viewModel = viewModel,
-                onOpenBook = { bookId ->
-                    navController.navigate(ReaderRoute(bookId = bookId))
-                }
-            )
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(
+            navController = navController,
+            startDestination = BookshelfRoute,
+            enterTransition = { fadeIn() + slideInHorizontally { it / 10 } },
+            exitTransition = { fadeOut() },
+            popEnterTransition = { fadeIn() },
+            popExitTransition = { fadeOut() + slideOutHorizontally { it / 10 } }
+        ) {
+            composable<BookshelfRoute> {
+                val viewModel: BookshelfViewModel = viewModel(
+                    factory = BookshelfViewModel.Factory(application)
+                )
+                BookshelfScreen(
+                    viewModel = viewModel,
+                    onOpenBook = { bookId ->
+                        navController.navigate(ReaderRoute(bookId = bookId))
+                    }
+                )
+            }
+
+            composable<ReaderRoute> { backStackEntry ->
+                val route = backStackEntry.toRoute<ReaderRoute>()
+                val viewModel: ReaderViewModel = viewModel(
+                    key = "reader_${route.bookId}",
+                    factory = ReaderViewModel.Factory(application, route.bookId)
+                )
+                ReaderScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
         }
 
-        composable<ReaderRoute> { backStackEntry ->
-            val route = backStackEntry.toRoute<ReaderRoute>()
-            val viewModel: ReaderViewModel = viewModel(
-                key = "reader_${route.bookId}",
-                factory = ReaderViewModel.Factory(application, route.bookId)
-            )
-            ReaderScreen(
-                viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
+        LaunchSignatureOverlay(
+            visible = showLaunchSignature,
+            onDismissed = { showLaunchSignature = false }
+        )
     }
 }
