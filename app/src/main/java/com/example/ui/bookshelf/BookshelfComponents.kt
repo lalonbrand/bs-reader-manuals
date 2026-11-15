@@ -35,9 +35,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -74,6 +71,8 @@ import com.example.R
 import com.example.data.local.BookEntity
 import com.example.data.local.BookStatus
 import com.example.data.repository.TransferProgress
+import com.example.ui.theme.SoftCyan
+import com.example.ui.theme.glassPanel
 import java.io.File
 
 @Composable
@@ -86,17 +85,12 @@ fun FeaturedBookSpotlightCard(
     val currentDisplay = (book.lastReadPage + 1).coerceIn(1, pageTotal)
     val progress = currentDisplay.toFloat() / pageTotal.toFloat()
 
-    Card(
+    Box(
         modifier = modifier
             .fillMaxWidth()
+            .glassPanel(shape = RoundedCornerShape(24.dp), highlighted = true)
             .testTag("featured_book_card")
-            .clickable(onClick = onOpenBook),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+            .clickable(onClick = onOpenBook)
     ) {
         Row(
             modifier = Modifier
@@ -120,12 +114,13 @@ fun FeaturedBookSpotlightCard(
             ) {
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primaryContainer
+                    color = Color.White.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
                 ) {
                     Text(
                         text = if (book.lastReadPage > 0) "CURRENTLY READING" else "ON DEVICE • WEBP",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -171,8 +166,8 @@ fun FeaturedBookSpotlightCard(
                         .fillMaxWidth()
                         .height(5.dp)
                         .clip(RoundedCornerShape(50)),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    color = SoftCyan,
+                    trackColor = Color.White.copy(alpha = 0.20f)
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -182,7 +177,11 @@ fun FeaturedBookSpotlightCard(
                     modifier = Modifier
                         .testTag("featured_open_button")
                         .minimumInteractiveComponentSize(),
-                    shape = MaterialTheme.shapes.small
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.MenuBook,
@@ -215,17 +214,12 @@ fun BookshelfGridCard(
 ) {
     val status = book.parsedStatus()
 
-    Card(
+    Box(
         modifier = modifier
             .fillMaxWidth()
+            .glassPanel(shape = RoundedCornerShape(22.dp), highlighted = false)
             .testTag("book_card_${book.id}")
-            .clickable(enabled = book.isReady, onClick = onOpen),
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .clickable(enabled = book.isReady, onClick = onOpen)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Box(
@@ -240,14 +234,14 @@ fun BookshelfGridCard(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Top-right badge
+                // Top-right frosted badge
                 val badgeBg = if (book.isReady) {
-                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.95f)
+                    Color(0xD9204568)
                 } else {
-                    MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+                    Color(0xCC191F42)
                 }
                 val badgeFg = if (book.isReady) {
-                    MaterialTheme.colorScheme.onSecondaryContainer
+                    SoftCyan
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 }
@@ -256,11 +250,12 @@ fun BookshelfGridCard(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    color = badgeBg
+                    shape = RoundedCornerShape(50),
+                    color = badgeBg,
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f))
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -327,21 +322,25 @@ fun BookshelfGridCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(5.dp)
-                                .clip(RoundedCornerShape(50))
+                                .clip(RoundedCornerShape(50)),
+                            color = SoftCyan,
+                            trackColor = Color.White.copy(alpha = 0.16f)
                         )
                     } else {
                         LinearProgressIndicator(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(5.dp)
-                                .clip(RoundedCornerShape(50))
+                                .clip(RoundedCornerShape(50)),
+                            color = SoftCyan,
+                            trackColor = Color.White.copy(alpha = 0.16f)
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = transfer?.detailLabel ?: "Preparing archive...",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = SoftCyan,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -351,7 +350,12 @@ fun BookshelfGridCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .minimumInteractiveComponentSize(),
-                        shape = MaterialTheme.shapes.small
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color.White.copy(alpha = 0.08f),
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -365,13 +369,17 @@ fun BookshelfGridCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        FilledTonalButton(
+                        Button(
                             onClick = onOpen,
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("open_book_button_${book.id}")
                                 .minimumInteractiveComponentSize(),
-                            shape = MaterialTheme.shapes.small
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
                         ) {
                             Text(
                                 text = if (book.lastReadPage > 0) "p.${book.lastReadPage + 1}" else "Read",
@@ -379,17 +387,23 @@ fun BookshelfGridCard(
                             )
                         }
 
-                        IconButton(
-                            onClick = onRequestDelete,
-                            modifier = Modifier
-                                .testTag("delete_book_button_${book.id}")
-                                .minimumInteractiveComponentSize()
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = Color.White.copy(alpha = 0.10f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = stringResource(R.string.action_delete),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            IconButton(
+                                onClick = onRequestDelete,
+                                modifier = Modifier
+                                    .testTag("delete_book_button_${book.id}")
+                                    .minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = stringResource(R.string.action_delete),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -411,8 +425,11 @@ fun BookshelfGridCard(
                             .fillMaxWidth()
                             .testTag("retry_book_button_${book.id}")
                             .minimumInteractiveComponentSize(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        shape = MaterialTheme.shapes.small
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        shape = RoundedCornerShape(50)
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -427,7 +444,11 @@ fun BookshelfGridCard(
                             .fillMaxWidth()
                             .testTag("download_book_button_${book.id}")
                             .minimumInteractiveComponentSize(),
-                        shape = MaterialTheme.shapes.small
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     ) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -452,21 +473,23 @@ fun BookCoverArt(
         else -> null
     }
 
+    val shape = RoundedCornerShape(14.dp)
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp))
+            .clip(shape)
             .background(
                 Brush.linearGradient(
                     colors = listOf(
-                        Color(0xFF283146),
-                        Color(0xFF1A202E)
+                        Color(0xFF423185),
+                        Color(0xFF1A2145)
                     )
                 )
             )
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+                color = Color.White.copy(alpha = 0.22f),
+                shape = shape
             )
     ) {
         if (coverModel != null) {
@@ -486,14 +509,15 @@ fun BookCoverArt(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleLarge,
-                    color = Color(0xFFF3E7CE),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
                 )
             }
         }
 
-        // Tactile left book spine groove
+        // Subtle left spine shading
         Box(
             modifier = Modifier
                 .fillMaxHeight()
@@ -523,7 +547,8 @@ fun CatalogSyncDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        icon = { Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.secondary) },
         title = {
             Text(
                 text = "Remote Catalog Source",
@@ -561,28 +586,26 @@ fun CatalogSyncDialog(
 
                 Surface(
                     shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    color = Color.White.copy(alpha = 0.06f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Text(
                             text = "EXPECTED CATALOG.JSON SCHEMA",
                             style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.secondary
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = """
                                 {
-                                  "catalogTitle": "Press",
                                   "books": [{
-                                    "id": "vol-01",
-                                    "title": "Folio Title",
+                                    "id": "book-1",
+                                    "title": "Manual Title",
                                     "author": "Author",
-                                    "zipUrl": "https://.../vol01.zip",
                                     "coverUrl": "https://.../cover.webp",
-                                    "pageCount": 24
+                                    "zipUrl": "https://.../pages.zip",
+                                    "pageCount": 120
                                   }]
                                 }
                             """.trimIndent(),
@@ -597,6 +620,11 @@ fun CatalogSyncDialog(
             Button(
                 onClick = { onConfirmSync(urlText) },
                 enabled = urlText.isNotBlank() && !isSyncing,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ),
                 modifier = Modifier.testTag("fetch_catalog_confirm_button")
             ) {
                 Text(if (isSyncing) "Syncing..." else "Fetch Catalog")
@@ -614,18 +642,20 @@ fun CatalogSyncDialog(
 fun AppCreditsDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         icon = {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .glassPanel(shape = RoundedCornerShape(18.dp), highlighted = true),
+                contentAlignment = Alignment.Center
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.bs_reader_logo),
                     contentDescription = stringResource(R.string.app_name),
                     colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                     modifier = Modifier
-                        .size(64.dp)
+                        .fillMaxSize()
                         .padding(10.dp)
                 )
             }
@@ -650,14 +680,15 @@ fun AppCreditsDialog(onDismiss: () -> Unit) {
                     textAlign = TextAlign.Center
                 )
 
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassPanel(shape = RoundedCornerShape(18.dp))
                 ) {
                     Column(
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
@@ -665,7 +696,7 @@ fun AppCreditsDialog(onDismiss: () -> Unit) {
                             text = "APP CREDIT",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = SoftCyan
                         )
                         Text(
                             text = stringResource(R.string.app_credit),
@@ -679,8 +710,13 @@ fun AppCreditsDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(
+            Button(
                 onClick = onDismiss,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ),
                 modifier = Modifier.testTag("close_credits_button")
             ) {
                 Text("Close")

@@ -8,17 +8,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.R
 
-val EditorialSerifFont = FontFamily(
-    Font(R.font.cormorant_garamond, FontWeight.Normal),
-    Font(R.font.cormorant_garamond, FontWeight.SemiBold),
-    Font(R.font.cormorant_garamond, FontWeight.Bold)
-)
-
 val UiSansFont = FontFamily(
     Font(R.font.plus_jakarta_sans, FontWeight.Normal),
     Font(R.font.plus_jakarta_sans, FontWeight.Medium),
     Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
     Font(R.font.plus_jakarta_sans, FontWeight.Bold)
+)
+
+val EditorialSerifFont = FontFamily(
+    Font(R.font.cormorant_garamond, FontWeight.Normal),
+    Font(R.font.cormorant_garamond, FontWeight.SemiBold),
+    Font(R.font.cormorant_garamond, FontWeight.Bold)
 )
 
 val MonoTechFont = FontFamily(
@@ -28,36 +28,37 @@ val MonoTechFont = FontFamily(
 
 val FolioTypography = Typography(
     displayLarge = TextStyle(
-        fontFamily = EditorialSerifFont,
+        fontFamily = UiSansFont,
         fontWeight = FontWeight.Bold,
-        fontSize = 40.sp,
-        lineHeight = 44.sp,
+        fontSize = 30.sp,
+        lineHeight = 36.sp,
         letterSpacing = (-0.5).sp
     ),
     headlineLarge = TextStyle(
-        fontFamily = EditorialSerifFont,
+        fontFamily = UiSansFont,
         fontWeight = FontWeight.Bold,
-        fontSize = 32.sp,
-        lineHeight = 36.sp,
-        letterSpacing = (-0.25).sp
+        fontSize = 26.sp,
+        lineHeight = 32.sp,
+        letterSpacing = (-0.3).sp
     ),
     headlineMedium = TextStyle(
-        fontFamily = EditorialSerifFont,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 24.sp,
-        lineHeight = 30.sp
+        fontFamily = UiSansFont,
+        fontWeight = FontWeight.Bold,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
+        letterSpacing = (-0.2).sp
     ),
     titleLarge = TextStyle(
-        fontFamily = EditorialSerifFont,
-        fontWeight = FontWeight.Bold,
-        fontSize = 21.sp,
-        lineHeight = 26.sp
+        fontFamily = UiSansFont,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 17.sp,
+        lineHeight = 23.sp
     ),
     titleMedium = TextStyle(
         fontFamily = UiSansFont,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 22.sp,
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
         letterSpacing = 0.1.sp
     ),
     bodyLarge = TextStyle(
@@ -77,20 +78,20 @@ val FolioTypography = Typography(
         fontWeight = FontWeight.SemiBold,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        letterSpacing = 0.2.sp
+        letterSpacing = 0.15.sp
     ),
     labelMedium = TextStyle(
         fontFamily = MonoTechFont,
         fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
         lineHeight = 14.sp,
-        letterSpacing = 0.4.sp
+        letterSpacing = 0.3.sp
     ),
     labelSmall = TextStyle(
         fontFamily = MonoTechFont,
         fontWeight = FontWeight.Normal,
         fontSize = 10.sp,
         lineHeight = 13.sp,
-        letterSpacing = 0.5.sp
+        letterSpacing = 0.4.sp
     )
 )

@@ -76,17 +76,11 @@ fun ReaderScreen(
     val deskColor = when (uiState.surfaceTone) {
         ReaderSurfaceTone.PAPER -> Color(0xFFE5DDD0)
         ReaderSurfaceTone.SEPIA -> Color(0xFFD6C7A7)
-        ReaderSurfaceTone.NIGHT -> Color(0xFF0E0C0A)
+        ReaderSurfaceTone.NIGHT -> Color(0xFF0D1128)
     }
 
-    val chromeSurface = when (uiState.surfaceTone) {
-        ReaderSurfaceTone.NIGHT -> Color(0xFF1F1A16).copy(alpha = 0.94f)
-        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
-    }
-    val chromeOnSurface = when (uiState.surfaceTone) {
-        ReaderSurfaceTone.NIGHT -> Color(0xFFF0E8DA)
-        else -> MaterialTheme.colorScheme.onSurface
-    }
+    val chromeSurface = Color(0xEB181F44)
+    val chromeOnSurface = MaterialTheme.colorScheme.onSurface
 
     Box(
         modifier = Modifier

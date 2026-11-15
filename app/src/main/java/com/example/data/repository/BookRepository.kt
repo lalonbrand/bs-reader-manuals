@@ -8,7 +8,6 @@ import com.example.data.local.BookEntity
 import com.example.data.local.BookStatus
 import com.example.data.remote.CatalogApi
 import com.example.data.remote.NetworkModule
-import com.example.data.storage.StarterBookProvisioner
 import com.example.data.storage.ZipBookExtractor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -54,25 +53,16 @@ class BookRepository(
 
     suspend fun getBook(bookId: String): BookEntity? = bookDao.getBookById(bookId)
 
-    suspend fun initializeStarterBookIfEmpty() {
-        if (bookDao.countBooks() == 0) {
-            val extraction = StarterBookProvisioner.ensureStarterBookExtracted(context)
-            val entity = BookEntity(
-                id = StarterBookProvisioner.STARTER_BOOK_ID,
-                title = "The Celestial Almanac",
-                author = "BS Reader Archival Press",
-                description = "Pre-rasterized 8-plate WebP specimen codex featuring celestial cartography, botanical engravings, and orbital diagrams.",
-                category = "Illustrated Specimen",
-                localCoverPath = extraction.coverFilePath,
-                localDirPath = extraction.bookDirectory.absolutePath,
-                pageCount = extraction.pageCount,
-                lastReadPage = 0,
-                fileSizeBytes = extraction.totalExtractedBytes,
-                status = BookStatus.READY.name,
-                isStarterBundled = true,
-                updatedAt = System.currentTimeMillis()
-            )
-            bookDao.upsertBook(entity)
+    suspend fun removeStarterBookIfPresent() = withContext(Dispatchers.IO) {
+        val starterId = "celestial-almanac-01"
+        val existing = bookDao.getBookById(starterId)
+        if (existing != null) {
+            existing.localDirPath?.let { path -> File(path).deleteRecursively() }
+            bookDao.deleteBookById(starterId)
+        }
+        val legacyDir = File(context.filesDir, "books/$starterId")
+        if (legacyDir.exists()) {
+            legacyDir.deleteRecursively()
         }
     }
 

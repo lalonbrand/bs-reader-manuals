@@ -109,7 +109,7 @@ class BookshelfViewModel(
 
     init {
         viewModelScope.launch {
-            runCatching { repository.initializeStarterBookIfEmpty() }
+            runCatching { repository.removeStarterBookIfPresent() }
             isInitializing.value = false
 
             val url = runCatching { settingsStore.preferences.first().catalogUrl }.getOrDefault("")

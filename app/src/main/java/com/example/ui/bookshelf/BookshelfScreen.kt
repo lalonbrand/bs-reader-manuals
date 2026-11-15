@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -28,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
@@ -38,15 +38,18 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SettingsEthernet
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,7 +65,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -72,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.local.BookEntity
+import com.example.ui.theme.CosmicGlassBackdrop
+import com.example.ui.theme.glassPanel
 import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -104,167 +109,180 @@ fun BookshelfScreen(
         }
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background
-    ) { innerPadding ->
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.55f),
-                            MaterialTheme.colorScheme.background
-                        )
-                    )
-                )
-                .padding(innerPadding)
-        ) {
-            val columnCount = when {
-                maxWidth >= 900.dp -> 4
-                maxWidth >= 600.dp -> 3
-                else -> 2
-            }
-
-            Column(
+    CosmicGlassBackdrop {
+        Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing,
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            containerColor = Color.Transparent
+        ) { innerPadding ->
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 1120.dp)
-                    .align(Alignment.TopCenter)
+                    .padding(innerPadding)
             ) {
-                BookshelfHeader(
-                    catalogUrl = uiState.catalogUrl,
-                    isSyncing = uiState.isSyncingCatalog,
-                    onSyncClick = {
-                        if (uiState.catalogUrl.isBlank()) {
-                            showCatalogDialog = true
-                        } else {
-                            viewModel.syncCatalog(uiState.catalogUrl)
-                        }
-                    },
-                    onConfigureCatalogClick = { showCatalogDialog = true },
-                    onCreditsClick = { showCreditsDialog = true },
-                    onImportZipClick = {
-                        zipPickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
-                    }
-                )
+                val columnCount = when {
+                    maxWidth >= 900.dp -> 4
+                    maxWidth >= 600.dp -> 3
+                    else -> 2
+                }
 
-                if (uiState.isInitializing) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator()
-                            Text(
-                                text = "Preparing WebP specimen folio...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .widthIn(max = 1120.dp)
+                        .align(Alignment.TopCenter)
+                ) {
+                    BookshelfHeader(
+                        catalogUrl = uiState.catalogUrl,
+                        isSyncing = uiState.isSyncingCatalog,
+                        onSyncClick = {
+                            if (uiState.catalogUrl.isBlank()) {
+                                showCatalogDialog = true
+                            } else {
+                                viewModel.syncCatalog(uiState.catalogUrl)
+                            }
+                        },
+                        onConfigureCatalogClick = { showCatalogDialog = true },
+                        onCreditsClick = { showCreditsDialog = true },
+                        onImportZipClick = {
+                            zipPickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
                         }
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(columnCount),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        // Spotlight currently reading card
-                        uiState.featuredBook?.let { featured ->
-                            item(span = { GridItemSpan(maxLineSpan) }, key = "featured_${featured.id}") {
-                                FeaturedBookSpotlightCard(
-                                    book = featured,
-                                    onOpenBook = { onOpenBook(featured.id) }
+                    )
+
+                    if (uiState.isInitializing) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                                Text(
+                                    text = "Loading library...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-
-                        // Filter chips + Search
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "filters_header") {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    items(BookshelfFilter.entries) { filter ->
-                                        FilterChip(
-                                            selected = uiState.selectedFilter == filter,
-                                            onClick = { viewModel.setFilter(filter) },
-                                            label = { Text(filter.label) },
-                                            modifier = Modifier.testTag("filter_chip_${filter.name}")
-                                        )
-                                    }
-                                }
-
-                                if (uiState.books.size > 2 || uiState.searchQuery.isNotBlank()) {
-                                    OutlinedTextField(
-                                        value = uiState.searchQuery,
-                                        onValueChange = viewModel::setSearchQuery,
-                                        placeholder = { Text("Filter titles, authors, or categories...") },
-                                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                        trailingIcon = {
-                                            if (uiState.searchQuery.isNotEmpty()) {
-                                                IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                                    Icon(Icons.Default.Close, contentDescription = "Clear search")
-                                                }
-                                            }
-                                        },
-                                        singleLine = true,
-                                        shape = MaterialTheme.shapes.medium,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("bookshelf_search_input")
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columnCount),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            // Spotlight currently reading card
+                            uiState.featuredBook?.let { featured ->
+                                item(span = { GridItemSpan(maxLineSpan) }, key = "featured_${featured.id}") {
+                                    FeaturedBookSpotlightCard(
+                                        book = featured,
+                                        onOpenBook = { onOpenBook(featured.id) }
                                     )
                                 }
                             }
-                        }
 
-                        if (uiState.books.isEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }, key = "empty_shelf") {
-                                EmptyBookshelfNotice(
-                                    hasCatalogUrl = uiState.catalogUrl.isNotBlank(),
-                                    onConfigureCatalog = { showCatalogDialog = true },
-                                    onImportZip = {
-                                        zipPickerLauncher.launch(
-                                            arrayOf("application/zip", "application/x-zip-compressed", "*/*")
+                            // Filter chips + Search
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "filters_header") {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(BookshelfFilter.entries) { filter ->
+                                            FilterChip(
+                                                selected = uiState.selectedFilter == filter,
+                                                onClick = { viewModel.setFilter(filter) },
+                                                label = { Text(filter.label) },
+                                                shape = RoundedCornerShape(50),
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    containerColor = Color.White.copy(alpha = 0.08f),
+                                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                                ),
+                                                border = FilterChipDefaults.filterChipBorder(
+                                                    enabled = true,
+                                                    selected = uiState.selectedFilter == filter,
+                                                    borderColor = Color.White.copy(alpha = 0.20f),
+                                                    selectedBorderColor = Color.Transparent
+                                                ),
+                                                modifier = Modifier.testTag("filter_chip_${filter.name}")
+                                            )
+                                        }
+                                    }
+
+                                    if (uiState.books.size > 2 || uiState.searchQuery.isNotBlank()) {
+                                        OutlinedTextField(
+                                            value = uiState.searchQuery,
+                                            onValueChange = viewModel::setSearchQuery,
+                                            placeholder = { Text("Filter titles, authors, or categories...") },
+                                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                            trailingIcon = {
+                                                if (uiState.searchQuery.isNotEmpty()) {
+                                                    IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                                        Icon(Icons.Default.Close, contentDescription = "Clear search")
+                                                    }
+                                                }
+                                            },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(18.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = Color.White.copy(alpha = 0.10f),
+                                                unfocusedContainerColor = Color.White.copy(alpha = 0.07f),
+                                                focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                                                unfocusedBorderColor = Color.White.copy(alpha = 0.20f)
+                                            ),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("bookshelf_search_input")
                                         )
                                     }
-                                )
+                                }
                             }
-                        } else {
-                            items(uiState.books, key = { it.id }) { book ->
-                                BookshelfGridCard(
-                                    book = book,
-                                    transfer = uiState.transfers[book.id],
-                                    onOpen = { onOpenBook(book.id) },
-                                    onDownload = { viewModel.downloadBook(book) },
-                                    onCancelDownload = { viewModel.cancelDownload(book.id) },
-                                    onRequestDelete = { bookPendingDelete = book }
-                                )
-                            }
-                        }
 
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "app_credit_footer") {
-                            Surface(
-                                shape = MaterialTheme.shapes.medium,
-                                color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.75f),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp)
-                                    .testTag("app_credit_footer")
-                                    .clickable { showCreditsDialog = true }
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.app_credit),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
-                                )
+                            if (uiState.books.isEmpty()) {
+                                item(span = { GridItemSpan(maxLineSpan) }, key = "empty_shelf") {
+                                    EmptyBookshelfNotice(
+                                        hasCatalogUrl = uiState.catalogUrl.isNotBlank(),
+                                        onConfigureCatalog = { showCatalogDialog = true },
+                                        onImportZip = {
+                                            zipPickerLauncher.launch(
+                                                arrayOf("application/zip", "application/x-zip-compressed", "*/*")
+                                            )
+                                        }
+                                    )
+                                }
+                            } else {
+                                items(uiState.books, key = { it.id }) { book ->
+                                    BookshelfGridCard(
+                                        book = book,
+                                        transfer = uiState.transfers[book.id],
+                                        onOpen = { onOpenBook(book.id) },
+                                        onDownload = { viewModel.downloadBook(book) },
+                                        onCancelDownload = { viewModel.cancelDownload(book.id) },
+                                        onRequestDelete = { bookPendingDelete = book }
+                                    )
+                                }
+                            }
+
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "app_credit_footer") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                        .glassPanel(shape = RoundedCornerShape(18.dp))
+                                        .testTag("app_credit_footer")
+                                        .clickable { showCreditsDialog = true }
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.app_credit),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -292,6 +310,7 @@ fun BookshelfScreen(
     bookPendingDelete?.let { target ->
         AlertDialog(
             onDismissRequest = { bookPendingDelete = null },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             title = { Text("Remove Extracted Pages?") },
             text = {
                 Text(
@@ -331,8 +350,8 @@ private fun BookshelfHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -344,13 +363,12 @@ private fun BookshelfHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                Box(
                     modifier = Modifier
-                        .size(46.dp)
-                        .clickable(onClick = onCreditsClick)
+                        .size(48.dp)
+                        .glassPanel(shape = RoundedCornerShape(15.dp))
+                        .clickable(onClick = onCreditsClick),
+                    contentAlignment = Alignment.Center
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.bs_reader_logo),
@@ -358,7 +376,7 @@ private fun BookshelfHeader(
                         colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(6.dp)
+                            .padding(8.dp)
                     )
                 }
 
@@ -376,30 +394,45 @@ private fun BookshelfHeader(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = onConfigureCatalogClick,
-                    modifier = Modifier
-                        .testTag("catalog_settings_button")
-                        .minimumInteractiveComponentSize()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.SettingsEthernet,
-                        contentDescription = stringResource(R.string.action_catalog_settings),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    IconButton(
+                        onClick = onConfigureCatalogClick,
+                        modifier = Modifier
+                            .testTag("catalog_settings_button")
+                            .minimumInteractiveComponentSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SettingsEthernet,
+                            contentDescription = stringResource(R.string.action_catalog_settings),
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
-                IconButton(
-                    onClick = onCreditsClick,
-                    modifier = Modifier
-                        .testTag("app_credits_button")
-                        .minimumInteractiveComponentSize()
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = stringResource(R.string.cd_app_credits),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    IconButton(
+                        onClick = onCreditsClick,
+                        modifier = Modifier
+                            .testTag("app_credits_button")
+                            .minimumInteractiveComponentSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = stringResource(R.string.cd_app_credits),
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }
@@ -408,19 +441,24 @@ private fun BookshelfHeader(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            FilledTonalButton(
+            Button(
                 onClick = onSyncClick,
                 enabled = !isSyncing,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("sync_catalog_button")
                     .minimumInteractiveComponentSize(),
-                shape = MaterialTheme.shapes.small
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
             ) {
                 if (isSyncing) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                 } else {
                     Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -438,7 +476,12 @@ private fun BookshelfHeader(
                     .weight(1f)
                     .testTag("import_zip_button")
                     .minimumInteractiveComponentSize(),
-                shape = MaterialTheme.shapes.small
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = Color.White.copy(alpha = 0.08f),
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                )
             ) {
                 Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
@@ -457,20 +500,29 @@ private fun EmptyBookshelfNotice(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 40.dp, horizontal = 24.dp),
+            .glassPanel(shape = RoundedCornerShape(24.dp))
+            .padding(vertical = 32.dp, horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.LibraryBooks,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.size(48.dp)
-        )
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .background(Color.White.copy(alpha = 0.12f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.LibraryBooks,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(28.dp)
+            )
+        }
         Text(
             text = "No Volumes Match This Filter",
             style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
         )
         Text(
             text = if (hasCatalogUrl) {
@@ -479,13 +531,29 @@ private fun EmptyBookshelfNotice(
                 "Connect a remote catalog.json URL to download .zip editions, or import a local .zip archive."
             },
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilledTonalButton(onClick = onConfigureCatalog) {
+            Button(
+                onClick = onConfigureCatalog,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
                 Text("Configure Catalog")
             }
-            OutlinedButton(onClick = onImportZip) {
+            OutlinedButton(
+                onClick = onImportZip,
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = Color.White.copy(alpha = 0.08f),
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                )
+            ) {
                 Text("Import .zip")
             }
         }

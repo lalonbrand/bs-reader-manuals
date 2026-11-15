@@ -2,37 +2,43 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Light Palette — Warm Editorial Atelier
-val VellumCream = Color(0xFFFAF6EE)
-val ParchmentSoft = Color(0xFFF3ECE0)
-val IvoryCard = Color(0xFFFFFDF8)
-val InkCharcoal = Color(0xFF1C1917)
-val MutedUmber = Color(0xFF5C534A)
-val WarmBorder = Color(0xFFE2D8C8)
+// Cosmic Violet-Indigo Glass Palette (inspired by luminous glassmorphic UI)
+val NebulaVoid = Color(0xFF0D1128)
+val NebulaNavy = Color(0xFF131836)
+val NebulaIndigo = Color(0xFF1D234A)
+val NebulaVioletGlow = Color(0xFF6B3FD8)
+val NebulaMagentaGlow = Color(0xFF9E5CE6)
+val NebulaCyanGlow = Color(0xFF1D6296)
 
-val BurnishedSienna = Color(0xFF9F4722)
-val SiennaSoft = Color(0xFFF4DFD4)
-val DeepTerracotta = Color(0xFF431807)
+// Frosted Glass Surfaces
+val GlassCardTop = Color(0x47929ED4)
+val GlassCardBottom = Color(0x244B568A)
+val GlassContainerLowest = Color(0xFF1B2142)
+val GlassContainerLow = Color(0xFF23294F)
+val GlassContainer = Color(0xFF2B325E)
+val GlassContainerHigh = Color(0xFF363E70)
+val GlassBorderLight = Color(0x4DFFFFFF)
+val GlassBorderSubtle = Color(0x24CBD2FF)
 
-val BotanicalSage = Color(0xFF3A644E)
-val SageContainer = Color(0xFFDCEBE1)
-val BrassGold = Color(0xFFB8862D)
-val BrassContainer = Color(0xFFF6EBD2)
+// Featured Violet Card Gradient
+val VioletCardTop = Color(0xFF7B53DF)
+val VioletCardBottom = Color(0xFF47328E)
 
-// Dark Palette — Candlelit Mahogany Study
-val MahoganyNight = Color(0xFF151210)
-val EspressoSurface = Color(0xFF211C18)
-val EspressoCard = Color(0xFF2A241F)
-val WarmAlabaster = Color(0xFFF2EAE0)
-val AshTaupe = Color(0xFFB5AA9E)
-val DarkStroke = Color(0xFF3E352E)
+// Pearl & Luminous Accents
+val PearlWhite = Color(0xFFF3F3FC)
+val PearlLavender = Color(0xFFDCD9F2)
+val PearlInk = Color(0xFF12162E)
+val ElectricViolet = Color(0xFFB39DFF)
+val ElectricVioletContainer = Color(0xFF3E2E7A)
+val SoftCyan = Color(0xFF8BE5FF)
+val CyanContainer = Color(0xFF194568)
+val SoftPinkOrchid = Color(0xFFE69DFF)
+val OrchidContainer = Color(0xFF4C2869)
 
-val CopperAmber = Color(0xFFE08B5E)
-val CopperContainer = Color(0xFF552612)
-val SageMist = Color(0xFF8AB89D)
-val SageDarkContainer = Color(0xFF213C2D)
-val GoldCandle = Color(0xFFE1B768)
-val GoldDarkContainer = Color(0xFF453414)
+// Text & Ink
+val StarlightWhite = Color(0xFFF6F7FF)
+val LavenderMist = Color(0xFFB9C0E0)
+val MutedSlate = Color(0xFF8E96BC)
 
-val ErrorCrimson = Color(0xFFB33A3A)
-val ErrorCrimsonDark = Color(0xFFE57373)
+val ErrorCoral = Color(0xFFFF7A8A)
+val ErrorCoralContainer = Color(0xFF5C1B29)

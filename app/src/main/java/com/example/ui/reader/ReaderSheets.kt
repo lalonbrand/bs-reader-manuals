@@ -58,7 +58,10 @@ fun PageGridBottomSheet(
     onSelectPage: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -156,7 +159,10 @@ fun ReaderAppearanceBottomSheet(
     onTogglePageOverlay: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
