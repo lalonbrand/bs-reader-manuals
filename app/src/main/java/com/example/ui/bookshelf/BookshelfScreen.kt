@@ -2,7 +2,10 @@ package com.example.ui.bookshelf
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -25,10 +28,12 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SettingsEthernet
 import androidx.compose.material.icons.filled.Sync
@@ -45,6 +50,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -57,8 +63,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
@@ -75,6 +84,7 @@ fun BookshelfScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showCatalogDialog by remember { mutableStateOf(false) }
+    var showCreditsDialog by remember { mutableStateOf(false) }
     var bookPendingDelete by remember { mutableStateOf<BookEntity?>(null) }
 
     val zipPickerLauncher = rememberLauncherForActivityResult(
@@ -135,6 +145,7 @@ fun BookshelfScreen(
                         }
                     },
                     onConfigureCatalogClick = { showCatalogDialog = true },
+                    onCreditsClick = { showCreditsDialog = true },
                     onImportZipClick = {
                         zipPickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
                     }
@@ -235,6 +246,27 @@ fun BookshelfScreen(
                                 )
                             }
                         }
+
+                        item(span = { GridItemSpan(maxLineSpan) }, key = "app_credit_footer") {
+                            Surface(
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.75f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .testTag("app_credit_footer")
+                                    .clickable { showCreditsDialog = true }
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.app_credit),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -251,6 +283,10 @@ fun BookshelfScreen(
                 viewModel.syncCatalog(url)
             }
         )
+    }
+
+    if (showCreditsDialog) {
+        AppCreditsDialog(onDismiss = { showCreditsDialog = false })
     }
 
     bookPendingDelete?.let { target ->
@@ -289,6 +325,7 @@ private fun BookshelfHeader(
     isSyncing: Boolean,
     onSyncClick: () -> Unit,
     onConfigureCatalogClick: () -> Unit,
+    onCreditsClick: () -> Unit,
     onImportZipClick: () -> Unit
 ) {
     Column(
@@ -302,30 +339,68 @@ private fun BookshelfHeader(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.bookshelf_title),
-                    style = MaterialTheme.typography.displayLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = stringResource(R.string.bookshelf_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clickable(onClick = onCreditsClick)
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.bs_reader_logo),
+                        contentDescription = stringResource(R.string.app_name),
+                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(6.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.bookshelf_title),
+                        style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = stringResource(R.string.bookshelf_subtitle),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
-            IconButton(
-                onClick = onConfigureCatalogClick,
-                modifier = Modifier
-                    .testTag("catalog_settings_button")
-                    .minimumInteractiveComponentSize()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SettingsEthernet,
-                    contentDescription = stringResource(R.string.action_catalog_settings),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onConfigureCatalogClick,
+                    modifier = Modifier
+                        .testTag("catalog_settings_button")
+                        .minimumInteractiveComponentSize()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SettingsEthernet,
+                        contentDescription = stringResource(R.string.action_catalog_settings),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(
+                    onClick = onCreditsClick,
+                    modifier = Modifier
+                        .testTag("app_credits_button")
+                        .minimumInteractiveComponentSize()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = stringResource(R.string.cd_app_credits),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
