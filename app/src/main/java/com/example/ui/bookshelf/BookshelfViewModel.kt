@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.BookEntity
 import com.example.data.local.BookStatus
+import com.example.data.local.DocumentNotification
 import com.example.data.local.FolioDatabase
 import com.example.data.local.SettingsDataStore
 import com.example.data.repository.BookRepository
@@ -22,9 +23,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class BookshelfFilter(val label: String) {
-    ALL("All Folios"),
-    READY("On Device"),
-    CATALOG("Remote Catalog")
+    ALL("All Manual"),
+    READY("Downloaded")
 }
 
 data class BookshelfUiState(
@@ -34,6 +34,8 @@ data class BookshelfUiState(
     val selectedFilter: BookshelfFilter = BookshelfFilter.ALL,
     val searchQuery: String = "",
     val catalogUrl: String = com.example.data.local.DEFAULT_CATALOG_URL,
+    val notifications: List<DocumentNotification> = emptyList(),
+    val unreadNotificationCount: Int = 0,
     val isSyncingCatalog: Boolean = false,
     val isInitializing: Boolean = true
 )
@@ -63,6 +65,7 @@ class BookshelfViewModel(
         selectedFilter,
         searchQuery,
         settingsStore.preferences,
+        settingsStore.notifications,
         isSyncingCatalog,
         isInitializing
     ) { values ->
@@ -73,14 +76,15 @@ class BookshelfViewModel(
         val filter = values[2] as BookshelfFilter
         val query = values[3] as String
         val prefs = values[4] as com.example.data.local.ReaderPreferences
-        val syncing = values[5] as Boolean
-        val initializing = values[6] as Boolean
+        @Suppress("UNCHECKED_CAST")
+        val notifications = values[5] as List<DocumentNotification>
+        val syncing = values[6] as Boolean
+        val initializing = values[7] as Boolean
 
         val filtered = allBooks.filter { book ->
             val matchesFilter = when (filter) {
                 BookshelfFilter.ALL -> true
                 BookshelfFilter.READY -> book.isReady
-                BookshelfFilter.CATALOG -> !book.zipUrl.isNullOrBlank()
             }
             val matchesQuery = query.isBlank() ||
                 book.title.contains(query, ignoreCase = true) ||
@@ -98,6 +102,8 @@ class BookshelfViewModel(
             selectedFilter = filter,
             searchQuery = query,
             catalogUrl = prefs.catalogUrl,
+            notifications = notifications,
+            unreadNotificationCount = notifications.count { it.isUnread },
             isSyncingCatalog = syncing,
             isInitializing = initializing
         )
@@ -194,12 +200,30 @@ class BookshelfViewModel(
         }
     }
 
+    fun markAllNotificationsRead() {
+        viewModelScope.launch {
+            settingsStore.markAllNotificationsRead()
+        }
+    }
+
+    fun deleteNotification(notificationId: String) {
+        viewModelScope.launch {
+            settingsStore.deleteNotification(notificationId)
+        }
+    }
+
+    fun clearAllNotifications() {
+        viewModelScope.launch {
+            settingsStore.clearAllNotifications()
+        }
+    }
+
     class Factory(private val application: Application) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
             val db = FolioDatabase.getInstance(application)
-            val repo = BookRepository(application, db.bookDao())
             val settings = SettingsDataStore(application)
+            val repo = BookRepository(application, db.bookDao(), settings)
             return BookshelfViewModel(application, repo, settings) as T
         }
     }

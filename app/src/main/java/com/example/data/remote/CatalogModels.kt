@@ -16,6 +16,7 @@ data class CatalogBookDto(
     @Json(name = "author") val author: String = "Unknown Author",
     @Json(name = "description") val description: String = "",
     @Json(name = "category") val category: String = "General",
+    @Json(name = "pdfFileName") val pdfFileName: String? = null,
     @Json(name = "coverUrl") val coverUrl: String? = null,
     @Json(name = "zipUrl") val zipUrl: String,
     @Json(name = "pageCount") val pageCount: Int = 0,

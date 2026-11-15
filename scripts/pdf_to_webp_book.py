@@ -105,6 +105,7 @@ def render_pdf_to_webp_zip(
         "author": author,
         "description": description,
         "category": category,
+        "pdfFileName": pdf_path.name,
         "coverUrl": f"{normalized_base}/{standalone_cover_path.name}",
         "zipUrl": f"{normalized_base}/{zip_filename}",
         "pageCount": rendered_page_count,

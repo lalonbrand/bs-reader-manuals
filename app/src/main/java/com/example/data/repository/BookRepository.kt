@@ -6,6 +6,8 @@ import android.provider.OpenableColumns
 import com.example.data.local.BookDao
 import com.example.data.local.BookEntity
 import com.example.data.local.BookStatus
+import com.example.data.local.DocumentNotification
+import com.example.data.local.SettingsDataStore
 import com.example.data.remote.CatalogApi
 import com.example.data.remote.NetworkModule
 import com.example.data.storage.ZipBookExtractor
@@ -40,6 +42,7 @@ enum class TransferPhase {
 class BookRepository(
     private val context: Context,
     private val bookDao: BookDao,
+    private val settingsStore: SettingsDataStore = SettingsDataStore(context),
     private val catalogApi: CatalogApi = NetworkModule.catalogApi
 ) {
     private val _transfers = MutableStateFlow<Map<String, TransferProgress>>(emptyMap())
@@ -97,6 +100,23 @@ class BookRepository(
             if (entities.isNotEmpty()) {
                 bookDao.upsertBooks(entities)
             }
+
+            val now = System.currentTimeMillis()
+            val candidateNotifications = catalog.books.mapIndexed { idx, dto ->
+                val resolvedPdfName = dto.pdfFileName?.takeIf { it.isNotBlank() }
+                    ?: "${dto.title.trim().ifBlank { dto.id }}.pdf"
+                DocumentNotification(
+                    id = "notif_${dto.id}_$now",
+                    bookId = dto.id,
+                    pdfFileName = resolvedPdfName,
+                    title = dto.title,
+                    sourceLabel = "Remote Catalog",
+                    timestampMillis = now + (catalog.books.size - idx),
+                    isUnread = true
+                )
+            }
+            settingsStore.recordNewlyAddedDocuments(candidateNotifications)
+
             entities.size
         }
     }
@@ -243,6 +263,17 @@ class BookRepository(
                 updatedAt = System.currentTimeMillis()
             )
             bookDao.upsertBook(book)
+            settingsStore.addNotification(
+                DocumentNotification(
+                    id = "notif_${bookId}_${System.currentTimeMillis()}",
+                    bookId = bookId,
+                    pdfFileName = displayName,
+                    title = cleanTitle,
+                    sourceLabel = "Local Import",
+                    timestampMillis = System.currentTimeMillis(),
+                    isUnread = true
+                )
+            )
             book
         }
     }

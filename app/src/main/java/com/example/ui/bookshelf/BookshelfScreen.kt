@@ -1,7 +1,5 @@
 package com.example.ui.bookshelf
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,10 +30,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FolderZip
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SettingsEthernet
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,7 +44,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -76,6 +72,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.local.BookEntity
 import com.example.ui.theme.CosmicGlassBackdrop
+import com.example.ui.theme.ErrorCoral
+import com.example.ui.theme.SoftCyan
 import com.example.ui.theme.glassPanel
 import kotlinx.coroutines.flow.collectLatest
 
@@ -90,15 +88,8 @@ fun BookshelfScreen(
 
     var showCatalogDialog by remember { mutableStateOf(false) }
     var showCreditsDialog by remember { mutableStateOf(false) }
+    var showNotificationsSheet by remember { mutableStateOf(false) }
     var bookPendingDelete by remember { mutableStateOf<BookEntity?>(null) }
-
-    val zipPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importLocalZip(uri)
-        }
-    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collectLatest { event ->
@@ -134,7 +125,13 @@ fun BookshelfScreen(
                 ) {
                     BookshelfHeader(
                         catalogUrl = uiState.catalogUrl,
+                        unreadNotificationCount = uiState.unreadNotificationCount,
+                        totalNotificationCount = uiState.notifications.size,
                         isSyncing = uiState.isSyncingCatalog,
+                        onNotificationsClick = {
+                            showNotificationsSheet = true
+                            viewModel.markAllNotificationsRead()
+                        },
                         onSyncClick = {
                             if (uiState.catalogUrl.isBlank()) {
                                 showCatalogDialog = true
@@ -142,11 +139,7 @@ fun BookshelfScreen(
                                 viewModel.syncCatalog(uiState.catalogUrl)
                             }
                         },
-                        onConfigureCatalogClick = { showCatalogDialog = true },
-                        onCreditsClick = { showCreditsDialog = true },
-                        onImportZipClick = {
-                            zipPickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
-                        }
+                        onCreditsClick = { showCreditsDialog = true }
                     )
 
                     if (uiState.isInitializing) {
@@ -243,12 +236,7 @@ fun BookshelfScreen(
                                 item(span = { GridItemSpan(maxLineSpan) }, key = "empty_shelf") {
                                     EmptyBookshelfNotice(
                                         hasCatalogUrl = uiState.catalogUrl.isNotBlank(),
-                                        onConfigureCatalog = { showCatalogDialog = true },
-                                        onImportZip = {
-                                            zipPickerLauncher.launch(
-                                                arrayOf("application/zip", "application/x-zip-compressed", "*/*")
-                                            )
-                                        }
+                                        onConfigureCatalog = { showCatalogDialog = true }
                                     )
                                 }
                             } else {
@@ -303,6 +291,15 @@ fun BookshelfScreen(
         )
     }
 
+    if (showNotificationsSheet) {
+        NotificationsBottomSheet(
+            notifications = uiState.notifications,
+            onDeleteNotification = viewModel::deleteNotification,
+            onClearAll = viewModel::clearAllNotifications,
+            onDismiss = { showNotificationsSheet = false }
+        )
+    }
+
     if (showCreditsDialog) {
         AppCreditsDialog(onDismiss = { showCreditsDialog = false })
     }
@@ -341,11 +338,12 @@ fun BookshelfScreen(
 @Composable
 private fun BookshelfHeader(
     catalogUrl: String,
+    unreadNotificationCount: Int,
+    totalNotificationCount: Int,
     isSyncing: Boolean,
+    onNotificationsClick: () -> Unit,
     onSyncClick: () -> Unit,
-    onConfigureCatalogClick: () -> Unit,
-    onCreditsClick: () -> Unit,
-    onImportZipClick: () -> Unit
+    onCreditsClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -394,99 +392,97 @@ private fun BookshelfHeader(
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Box {
+                val hasActiveAlerts = unreadNotificationCount > 0 || totalNotificationCount > 0
                 Surface(
                     shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.10f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
+                    color = if (unreadNotificationCount > 0) {
+                        SoftCyan.copy(alpha = 0.16f)
+                    } else {
+                        Color.White.copy(alpha = 0.10f)
+                    },
+                    border = BorderStroke(
+                        1.dp,
+                        if (unreadNotificationCount > 0) {
+                            SoftCyan.copy(alpha = 0.60f)
+                        } else {
+                            Color.White.copy(alpha = 0.22f)
+                        }
+                    )
                 ) {
                     IconButton(
-                        onClick = onConfigureCatalogClick,
+                        onClick = onNotificationsClick,
                         modifier = Modifier
-                            .testTag("catalog_settings_button")
+                            .testTag("notification_button")
                             .minimumInteractiveComponentSize()
                     ) {
                         Icon(
-                            imageVector = Icons.Default.SettingsEthernet,
-                            contentDescription = stringResource(R.string.action_catalog_settings),
-                            tint = MaterialTheme.colorScheme.onSurface
+                            imageVector = if (hasActiveAlerts) {
+                                Icons.Default.Notifications
+                            } else {
+                                Icons.Default.NotificationsNone
+                            },
+                            contentDescription = stringResource(R.string.cd_notifications),
+                            tint = if (unreadNotificationCount > 0) SoftCyan else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.10f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
-                ) {
-                    IconButton(
-                        onClick = onCreditsClick,
+
+                if (unreadNotificationCount > 0) {
+                    Surface(
+                        shape = CircleShape,
+                        color = ErrorCoral,
+                        border = BorderStroke(1.5.dp, Color(0xFF131836)),
                         modifier = Modifier
-                            .testTag("app_credits_button")
-                            .minimumInteractiveComponentSize()
+                            .align(Alignment.TopEnd)
+                            .padding(top = 2.dp, end = 2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = stringResource(R.string.cd_app_credits),
-                            tint = MaterialTheme.colorScheme.onSurface
+                        Text(
+                            text = if (unreadNotificationCount > 9) "9+" else unreadNotificationCount.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                         )
                     }
+                } else if (totalNotificationCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 6.dp, end = 6.dp)
+                            .size(8.dp)
+                            .background(SoftCyan, CircleShape)
+                    )
                 }
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        Button(
+            onClick = onSyncClick,
+            enabled = !isSyncing,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("sync_catalog_button")
+                .minimumInteractiveComponentSize(),
+            shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            )
         ) {
-            Button(
-                onClick = onSyncClick,
-                enabled = !isSyncing,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("sync_catalog_button")
-                    .minimumInteractiveComponentSize(),
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
+            if (isSyncing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
                 )
-            ) {
-                if (isSyncing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (catalogUrl.isBlank()) "Set catalog.json" else stringResource(R.string.action_fetch_catalog),
-                    maxLines = 1
-                )
+            } else {
+                Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-
-            OutlinedButton(
-                onClick = onImportZipClick,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("import_zip_button")
-                    .minimumInteractiveComponentSize(),
-                shape = RoundedCornerShape(50),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = Color.White.copy(alpha = 0.08f),
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                )
-            ) {
-                Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.action_import_zip), maxLines = 1)
-            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (catalogUrl.isBlank()) "Set catalog.json" else stringResource(R.string.action_fetch_catalog),
+                maxLines = 1
+            )
         }
     }
 }
@@ -494,8 +490,7 @@ private fun BookshelfHeader(
 @Composable
 private fun EmptyBookshelfNotice(
     hasCatalogUrl: Boolean,
-    onConfigureCatalog: () -> Unit,
-    onImportZip: () -> Unit
+    onConfigureCatalog: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -526,36 +521,23 @@ private fun EmptyBookshelfNotice(
         )
         Text(
             text = if (hasCatalogUrl) {
-                "Sync your remote catalog.json or import a .zip archive of page_001.webp images from storage."
+                "Sync your remote catalog.json to fetch new manuals from your library."
             } else {
-                "Connect a remote catalog.json URL to download .zip editions, or import a local .zip archive."
+                "Connect a remote catalog.json URL to download manual editions."
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onConfigureCatalog,
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            ) {
-                Text("Configure Catalog")
-            }
-            OutlinedButton(
-                onClick = onImportZip,
-                shape = RoundedCornerShape(50),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = Color.White.copy(alpha = 0.08f),
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                )
-            ) {
-                Text("Import .zip")
-            }
+        Button(
+            onClick = onConfigureCatalog,
+            shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            )
+        ) {
+            Text("Configure Catalog")
         }
     }
 }
