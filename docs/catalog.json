@@ -1,4 +1,16 @@
 {
-  "catalogTitle": "BS Reader — BESTSELLER Manuals",
-  "books": []
+  "catalogTitle": "BS Reader \u2014 BESTSELLER Manuals",
+  "books": [
+    {
+      "id": "bestseller-product-safety-manual-v2-2-mar2026",
+      "title": "Bestseller Product Safety Manual V2.2  Mar2026",
+      "author": "BESTSELLER Manuals",
+      "description": "",
+      "category": "Manual",
+      "coverUrl": "https://mrlrajin.github.io/bs-reader-manuals/bestseller-product-safety-manual-v2-2-mar2026_cover.webp",
+      "zipUrl": "https://mrlrajin.github.io/bs-reader-manuals/bestseller-product-safety-manual-v2-2-mar2026.zip",
+      "pageCount": 65,
+      "fileSizeBytes": 3747870
+    }
+  ]
 }
