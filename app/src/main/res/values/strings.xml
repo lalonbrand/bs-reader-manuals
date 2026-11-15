@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">BS Reader</string>
+    <string name="bookshelf_title">BS Reader</string>
+    <string name="bookshelf_subtitle">Bestseller Manuals &amp; WebP Library</string>
+    <string name="action_fetch_catalog">Sync Catalog</string>
+    <string name="action_import_zip">Import .zip</string>
+    <string name="action_catalog_settings">Catalog Source</string>
+    <string name="action_read">Open Codex</string>
+    <string name="action_continue_reading">Continue Reading</string>
+    <string name="action_download">Download</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Remove Local</string>
+    <string name="action_retry">Retry</string>
+    <string name="cd_back">Navigate back</string>
+    <string name="cd_book_cover">Book cover artwork</string>
+    <string name="cd_page_grid">Page thumbnails grid</string>
+    <string name="cd_reader_settings">Reader appearance settings</string>
+    <string name="cd_sync_catalog">Fetch remote catalog.json</string>
+    <string name="cd_import_zip">Import local zip archive</string>
+</resources>

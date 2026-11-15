@@ -1,0 +1,6 @@
+{
+  "name": "BS Reader",
+  "description": "Pre-rasterized WebP book reader with realistic page-curl physics, remote catalog sync, and local zip archive extraction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

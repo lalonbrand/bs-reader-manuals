@@ -1,0 +1,100 @@
+name: Convert PDF to BS Reader WebP Manual
+
+on:
+  repository_dispatch:
+    types: [new_pdf_detected]
+
+  workflow_dispatch:
+    inputs:
+      file_id:
+        description: "Google Drive File ID"
+        required: true
+        type: string
+      title:
+        description: "Manual Title (optional)"
+        required: false
+        type: string
+      author:
+        description: "Author / Department"
+        required: false
+        default: "BESTSELLER Manuals"
+        type: string
+
+  push:
+    branches: [main]
+    paths:
+      - "incoming_pdfs/*.pdf"
+
+permissions:
+  contents: write
+
+jobs:
+  build-webp-manual:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Poppler & Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          python -m pip install --upgrade pip
+          pip install pdf2image pillow gdown
+
+      - name: Convert PDF(s) to WebP zip & update catalog.json
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_FILE_ID: ${{ github.event.client_payload.fileId }}
+          DISPATCH_FILE_NAME: ${{ github.event.client_payload.name }}
+          INPUT_FILE_ID: ${{ inputs.file_id }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_AUTHOR: ${{ inputs.author }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -e
+          BASE_URL="https://${REPO_OWNER}.github.io/${REPO_NAME}"
+          mkdir -p docs tmp_pdfs
+
+          if [ "$EVENT_NAME" = "repository_dispatch" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            FILE_ID="${DISPATCH_FILE_ID:-$INPUT_FILE_ID}"
+            RAW_NAME="${DISPATCH_FILE_NAME:-manual_${FILE_ID}.pdf}"
+            SAFE_NAME="${RAW_NAME// /_}"
+            PDF_PATH="tmp_pdfs/${SAFE_NAME}"
+
+            gdown --id "$FILE_ID" -O "$PDF_PATH"
+
+            CMD=(python scripts/pdf_to_webp_book.py "$PDF_PATH" \
+              --output-dir docs \
+              --base-url "$BASE_URL" \
+              --catalog docs/catalog.json)
+
+            if [ -n "$INPUT_TITLE" ]; then
+              CMD+=(--title "$INPUT_TITLE")
+            fi
+            if [ -n "$INPUT_AUTHOR" ]; then
+              CMD+=(--author "$INPUT_AUTHOR")
+            fi
+
+            "${CMD[@]}"
+          else
+            for pdf in incoming_pdfs/*.pdf; do
+              [ -e "$pdf" ] || continue
+              python scripts/pdf_to_webp_book.py "$pdf" \
+                --output-dir docs \
+                --base-url "$BASE_URL" \
+                --catalog docs/catalog.json
+            done
+          fi
+
+          rm -rf tmp_pdfs
+
+      - name: Commit & push updated catalog.json and archives
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --cached --quiet || git commit -m "Publish WebP manual and update catalog.json"
+          git push
