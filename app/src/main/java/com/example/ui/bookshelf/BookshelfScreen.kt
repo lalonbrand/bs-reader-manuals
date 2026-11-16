@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -30,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Search
@@ -39,6 +41,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -320,13 +323,39 @@ fun BookshelfScreen(
         AlertDialog(
             onDismissRequest = { bookPendingDelete = null },
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            title = { Text("Remove Extracted Pages?") },
+            title = { Text("Manage Local Manual") },
             text = {
-                Text(
-                    "This deletes the local WebP pages for \"${target.title}\" from device storage. " +
-                        if (target.zipUrl != null) "You can re-download it from the catalog anytime."
-                        else "This local import will be removed from your shelf."
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Manage stored WebP pages for \"${target.title}\". " +
+                            if (target.zipUrl != null) {
+                                "You can re-download the latest high-resolution pages without losing your reading progress, or remove local files."
+                            } else {
+                                "Removing deletes this local manual from your device."
+                            }
+                    )
+                    if (target.zipUrl != null) {
+                        FilledTonalButton(
+                            onClick = {
+                                viewModel.downloadBook(target)
+                                bookPendingDelete = null
+                            },
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("redownload_book_button")
+                                .minimumInteractiveComponentSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudDownload,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Re-download High Quality")
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(

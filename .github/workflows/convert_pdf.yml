@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "incoming_pdfs/**"
+      - "scripts/pdf_to_webp_book.py"
 
   workflow_dispatch:
     inputs:
@@ -84,7 +85,8 @@ jobs:
             [ -n "$INPUT_AUTHOR" ] && CMD+=(--author "$INPUT_AUTHOR")
             "${CMD[@]}"
           else
-            if [ "$REBUILD_ALL" = "true" ] || ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            SCRIPT_CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/pdf_to_webp_book.py' || true)
+            if [ "$REBUILD_ALL" = "true" ] || [ -n "$SCRIPT_CHANGED" ] || ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
               TARGET_PDFS=(incoming_pdfs/*.pdf)
             else
               mapfile -t CHANGED < <(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'incoming_pdfs/*.pdf' 'incoming_pdfs/*.PDF')

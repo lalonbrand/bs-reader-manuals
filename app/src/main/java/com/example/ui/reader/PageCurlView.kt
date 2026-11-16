@@ -3,7 +3,7 @@ package com.example.ui.reader
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.Rect
+import android.graphics.RectF
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asAndroidColorFilter
@@ -785,8 +786,8 @@ fun PageCurlView(
                         val androidBmp = bleedSource.asAndroidBitmap()
                         nc.drawBitmap(
                             androidBmp,
-                            Rect(0, 0, androidBmp.width, androidBmp.height),
-                            Rect(0, bleedScrollY.toInt(), w.toInt(), (bleedScrollY + contentH).toInt()),
+                            null,
+                            RectF(0f, bleedScrollY, w, bleedScrollY + contentH),
                             bleedPaint
                         )
                         nc.restore()
@@ -951,6 +952,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawImageFitted(
         image = bitmap,
         dstOffset = IntOffset(0, scrollY.toInt()),
         dstSize = IntSize(w.toInt(), contentH.toInt()),
+        filterQuality = FilterQuality.High,
         colorFilter = colorFilter
     )
 }
@@ -964,13 +966,13 @@ private fun drawNativeBitmapFitted(
     colorFilter: ColorFilter?
 ) {
     val bmp = bitmap.asAndroidBitmap()
-    val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+    val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
         this.colorFilter = colorFilter?.asAndroidColorFilter()
     }
     canvas.drawBitmap(
         bmp,
-        Rect(0, 0, bmp.width, bmp.height),
-        Rect(0, scrollY.toInt(), w.toInt(), (scrollY + contentH).toInt()),
+        null,
+        RectF(0f, scrollY, w, scrollY + contentH),
         paint
     )
 }

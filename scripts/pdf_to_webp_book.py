@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Converts a local PDF into a BS Reader-compatible .zip archive of pre-rasterized
-WebP pages (cover.webp + 1200px-wide page_XXX.webp) and generates/updates a
+Converts a local PDF into a BS Reader-compatible .zip archive of high-resolution
+WebP pages (cover.webp + 300-DPI page_XXX.webp) and generates/updates a
 catalog.json metadata entry.
 """
 
@@ -23,14 +23,36 @@ def slugify(text: str) -> str:
     return slug or "manual"
 
 
-def resize_to_width(img: Image.Image, target_width: int) -> Image.Image:
+def to_rgb_white_bg(img: Image.Image) -> Image.Image:
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.split()[3])
+        return bg
     if img.mode != "RGB":
-        img = img.convert("RGB")
+        return img.convert("RGB")
+    return img
+
+
+def resize_to_width(img: Image.Image, target_width: int) -> Image.Image:
+    img = to_rgb_white_bg(img)
     w, h = img.size
     if w == target_width:
         return img
     target_height = max(1, round(h * (target_width / float(w))))
     return img.resize((target_width, target_height), LANCZOS)
+
+
+def fit_within_bounds(img: Image.Image, max_width: int, max_height: int) -> Image.Image:
+    """Keeps native 300-DPI Poppler output untouched unless it exceeds Android texture bounds."""
+    img = to_rgb_white_bg(img)
+    w, h = img.size
+    if w <= max_width and h <= max_height:
+        return img
+    scale = min(max_width / float(w), max_height / float(h))
+    target_w = max(1, round(w * scale))
+    target_h = max(1, round(h * scale))
+    return img.resize((target_w, target_h), LANCZOS)
 
 
 def render_pdf_to_webp_zip(
@@ -42,10 +64,13 @@ def render_pdf_to_webp_zip(
     description: str,
     category: str,
     base_url: str,
-    dpi: int = 180,
-    page_width: int = 1200,
-    cover_width: int = 600,
-    webp_quality: int = 82,
+    dpi: int = 300,
+    max_page_width: int = 2560,
+    max_page_height: int = 3600,
+    min_page_width: int = 2000,
+    cover_width: int = 960,
+    webp_quality: int = 94,
+    lossless: bool = False,
     include_cover_as_page: bool = True,
 ) -> dict:
     if not pdf_path.exists():
@@ -62,33 +87,48 @@ def render_pdf_to_webp_zip(
         raise ValueError("PDF contains zero pages.")
 
     rendered_page_count = 0
+    save_kwargs = (
+        {"format": "WEBP", "lossless": True, "quality": 100, "method": 6}
+        if lossless
+        else {"format": "WEBP", "quality": webp_quality, "method": 6}
+    )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         files_to_zip: list[tuple[Path, str]] = []
 
-        # 1. Render page 1 as cover.webp thumbnail
+        # 1. Render page 1 as crisp cover.webp thumbnail
         cover_images = convert_from_path(
             str(pdf_path), dpi=dpi, first_page=1, last_page=1
         )
         cover_img = resize_to_width(cover_images[0], cover_width)
         cover_tmp = tmp_path / "cover.webp"
-        cover_img.save(cover_tmp, format="WEBP", quality=webp_quality, method=6)
-        cover_img.save(standalone_cover_path, format="WEBP", quality=webp_quality, method=6)
+        cover_img.save(cover_tmp, format="WEBP", quality=max(webp_quality, 90), method=6)
+        cover_img.save(standalone_cover_path, format="WEBP", quality=max(webp_quality, 90), method=6)
         files_to_zip.append((cover_tmp, "cover.webp"))
 
-        # 2. Convert pages into 1200px-wide compressed WebP sheets
+        # 2. Render each PDF page at high DPI with native pixel fidelity
         start_page = 1 if (include_cover_as_page or total_pdf_pages == 1) else 2
         for pdf_page in range(start_page, total_pdf_pages + 1):
             pages = convert_from_path(
                 str(pdf_path), dpi=dpi, first_page=pdf_page, last_page=pdf_page
             )
-            page_img = resize_to_width(pages[0], page_width)
+            raw_page = pages[0]
+
+            # If PDF physical dimensions are unusually small, re-rasterize vector art at higher DPI
+            if raw_page.width < min_page_width and dpi < 600:
+                boosted_dpi = min(600, max(dpi, round(dpi * (min_page_width / float(raw_page.width)))))
+                if boosted_dpi > dpi:
+                    raw_page = convert_from_path(
+                        str(pdf_path), dpi=boosted_dpi, first_page=pdf_page, last_page=pdf_page
+                    )[0]
+
+            page_img = fit_within_bounds(raw_page, max_page_width, max_page_height)
 
             rendered_page_count += 1
             arc_name = f"page_{rendered_page_count:03d}.webp"
             page_tmp = tmp_path / arc_name
-            page_img.save(page_tmp, format="WEBP", quality=webp_quality, method=6)
+            page_img.save(page_tmp, **save_kwargs)
             files_to_zip.append((page_tmp, arc_name))
 
         # 3. Bundle into zipped book archive
@@ -129,7 +169,7 @@ def upsert_catalog_entry(catalog_path: Path, entry: dict, catalog_title: str) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert a PDF into a BS Reader WebP .zip archive and catalog entry."
+        description="Convert a PDF into a high-resolution BS Reader WebP .zip archive and catalog entry."
     )
     parser.add_argument("pdf", type=Path, help="Path to the source PDF file")
     parser.add_argument("-o", "--output-dir", type=Path, default=Path("./docs"))
@@ -143,8 +183,13 @@ def main() -> None:
         default="https://lalonbrand.github.io/bs-reader-manuals",
         help="Public base URL where the .zip and cover.webp will be hosted",
     )
-    parser.add_argument("--dpi", type=int, default=180)
-    parser.add_argument("--quality", type=int, default=82)
+    parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument("--quality", type=int, default=94)
+    parser.add_argument(
+        "--lossless",
+        action="store_true",
+        help="Encode WebP pages losslessly for maximum sharpness (larger archive)",
+    )
     parser.add_argument(
         "--skip-cover-page",
         action="store_true",
@@ -172,6 +217,7 @@ def main() -> None:
         base_url=args.base_url,
         dpi=args.dpi,
         webp_quality=args.quality,
+        lossless=args.lossless,
         include_cover_as_page=not args.skip_cover_page,
     )
 

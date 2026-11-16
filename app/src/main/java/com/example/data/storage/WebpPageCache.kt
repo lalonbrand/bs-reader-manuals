@@ -15,7 +15,7 @@ import java.io.File
 
 class WebpPageCache {
     private val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
-    private val cacheSizeKb = (maxMemoryKb / 6).coerceIn(12 * 1024, 48 * 1024)
+    private val cacheSizeKb = (maxMemoryKb / 3).coerceIn(32 * 1024, 128 * 1024)
 
     private val lruCache = object : LruCache<String, CachedPage>(cacheSizeKb) {
         override fun sizeOf(key: String, value: CachedPage): Int = value.sizeKb
@@ -41,11 +41,11 @@ class WebpPageCache {
             ?: emptyList()
     }
 
-    fun getCached(file: File, maxDimensionPx: Int = 2048): ImageBitmap? {
+    fun getCached(file: File, maxDimensionPx: Int = 4096): ImageBitmap? {
         return lruCache.get(cacheKey(file, maxDimensionPx))?.imageBitmap
     }
 
-    suspend fun loadPage(file: File, maxDimensionPx: Int = 2048): ImageBitmap? {
+    suspend fun loadPage(file: File, maxDimensionPx: Int = 4096): ImageBitmap? {
         val key = cacheKey(file, maxDimensionPx)
         lruCache.get(key)?.let { return it.imageBitmap }
 
@@ -63,8 +63,8 @@ class WebpPageCache {
         }
     }
 
-    fun prefetchAround(scope: CoroutineScope, pages: List<File>, centerIndex: Int, maxDimensionPx: Int = 2048) {
-        val indices = listOf(centerIndex, centerIndex + 1, centerIndex - 1, centerIndex + 2, centerIndex - 2)
+    fun prefetchAround(scope: CoroutineScope, pages: List<File>, centerIndex: Int, maxDimensionPx: Int = 4096) {
+        val indices = listOf(centerIndex, centerIndex + 1, centerIndex - 1)
             .filter { it in pages.indices }
             .distinct()
 
@@ -97,6 +97,8 @@ class WebpPageCache {
 
         val decodeOpts = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
+            inScaled = false
+            inDither = false
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         return BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
