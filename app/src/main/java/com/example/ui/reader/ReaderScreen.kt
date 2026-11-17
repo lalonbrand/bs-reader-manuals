@@ -43,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -87,6 +88,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.local.ReaderSurfaceTone
+import com.example.ui.theme.NotoBengaliFont
 import com.example.ui.theme.PearlWhite
 import com.example.ui.theme.SoftCyan
 import kotlin.math.roundToInt
@@ -102,6 +104,7 @@ fun ReaderScreen(
     var showCurlHint by rememberSaveable { mutableStateOf(true) }
     var showPageGrid by remember { mutableStateOf(false) }
     var showAppearanceSheet by remember { mutableStateOf(false) }
+    var showBanglaSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val view = LocalView.current
@@ -367,6 +370,47 @@ fun ReaderScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+
+                            val hasBanglaBook = uiState.translationsByPage.isNotEmpty()
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (hasBanglaBook) {
+                                    SoftCyan.copy(alpha = 0.18f)
+                                } else {
+                                    Color.White.copy(alpha = 0.10f)
+                                },
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (hasBanglaBook) {
+                                        SoftCyan.copy(alpha = 0.55f)
+                                    } else {
+                                        Color.White.copy(alpha = 0.22f)
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .testTag("bangla_translation_button")
+                                    .minimumInteractiveComponentSize()
+                                    .clickable { showBanglaSheet = true }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Translate,
+                                        contentDescription = stringResource(R.string.cd_bangla_translate),
+                                        tint = if (hasBanglaBook) SoftCyan else chromeOnSurface,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.action_bangla_translate),
+                                        style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont),
+                                        color = if (hasBanglaBook) SoftCyan else chromeOnSurface
+                                    )
+                                }
                             }
 
                             Surface(
@@ -717,6 +761,18 @@ fun ReaderScreen(
             onTogglePageOverlay = viewModel::setShowPageOverlay,
             onTogglePageSound = viewModel::setPageSoundEnabled,
             onDismiss = { showAppearanceSheet = false }
+        )
+    }
+
+    if (showBanglaSheet) {
+        val oneBasedPage = uiState.currentPageIndex + 1
+        BilingualTranslationBottomSheet(
+            currentPageIndex = uiState.currentPageIndex,
+            totalPages = uiState.pageFiles.size,
+            hasBookTranslations = uiState.translationsByPage.isNotEmpty(),
+            pageLines = uiState.translationsByPage[oneBasedPage].orEmpty(),
+            onSelectPage = viewModel::goToPage,
+            onDismiss = { showBanglaSheet = false }
         )
     }
 }

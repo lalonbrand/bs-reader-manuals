@@ -1,0 +1,14 @@
+Review the following Bangla translation as an experienced Bangladeshi garments-industry translator.
+
+Identify and correct:
+1. Robotic or machine-like expressions.
+2. Unnatural Bangla sentence structures.
+3. Difficult words that ordinary workers may not understand.
+4. Incorrect technical terminology.
+5. Any changes to the original technical meaning.
+
+Rewrite only where necessary.
+
+Do not change numbers, measurements, formulas, technical specifications, or instructions.
+
+Return the complete corrected Bangla text.

@@ -26,6 +26,13 @@ val MonoTechFont = FontFamily(
     Font(R.font.jetbrains_mono, FontWeight.Medium)
 )
 
+val NotoBengaliFont = FontFamily(
+    Font(R.font.noto_sans_bengali, FontWeight.Normal),
+    Font(R.font.noto_sans_bengali, FontWeight.Medium),
+    Font(R.font.noto_sans_bengali, FontWeight.SemiBold),
+    Font(R.font.noto_sans_bengali, FontWeight.Bold)
+)
+
 val FolioTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = UiSansFont,

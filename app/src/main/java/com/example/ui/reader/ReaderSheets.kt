@@ -3,6 +3,7 @@ package com.example.ui.reader
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,35 +18,69 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.local.BookEntity
 import com.example.data.local.ReaderSurfaceTone
+import com.example.data.local.TranslatedLine
 import com.example.ui.bookshelf.formatBytes
+import com.example.ui.theme.NotoBengaliFont
+import com.example.ui.theme.SoftCyan
+import com.example.ui.theme.glassPanel
+import kotlinx.coroutines.delay
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -293,6 +328,382 @@ fun ReaderAppearanceBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BilingualTranslationBottomSheet(
+    currentPageIndex: Int,
+    totalPages: Int,
+    hasBookTranslations: Boolean,
+    pageLines: List<TranslatedLine>,
+    onSelectPage: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    @Suppress("DEPRECATION")
+    val clipboardManager = LocalClipboardManager.current
+
+    var searchQuery by remember { mutableStateOf("") }
+    var banglaOnlyMode by remember { mutableStateOf(false) }
+    var copiedIndex by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(copiedIndex) {
+        if (copiedIndex != null) {
+            delay(1500L)
+            copiedIndex = null
+        }
+    }
+
+    val filteredLines = remember(pageLines, searchQuery) {
+        val trimmed = searchQuery.trim()
+        if (trimmed.isBlank()) {
+            pageLines
+        } else {
+            pageLines.filter { line ->
+                line.en.contains(trimmed, ignoreCase = true) ||
+                    line.bn.contains(trimmed, ignoreCase = true)
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header with page stepper
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.bangla_sheet_title),
+                        style = MaterialTheme.typography.headlineMedium.copy(fontFamily = NotoBengaliFont),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (hasBookTranslations) {
+                            "Page ${currentPageIndex + 1} of $totalPages • ${pageLines.size} lines"
+                        } else {
+                            "Page ${currentPageIndex + 1} of $totalPages"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = SoftCyan
+                    )
+                }
+
+                if (totalPages > 1) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val canPrev = currentPageIndex > 0
+                        val canNext = currentPageIndex < totalPages - 1
+
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = if (canPrev) 0.12f else 0.04f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = if (canPrev) 0.24f else 0.10f))
+                        ) {
+                            IconButton(
+                                onClick = { onSelectPage(currentPageIndex - 1) },
+                                enabled = canPrev,
+                                modifier = Modifier
+                                    .testTag("bangla_prev_page_button")
+                                    .minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "Previous page translation",
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = if (canNext) 0.12f else 0.04f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = if (canNext) 0.24f else 0.10f))
+                        ) {
+                            IconButton(
+                                onClick = { onSelectPage(currentPageIndex + 1) },
+                                enabled = canNext,
+                                modifier = Modifier
+                                    .testTag("bangla_next_page_button")
+                                    .minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Next page translation",
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (hasBookTranslations && pageLines.isNotEmpty()) {
+                // Display mode toggle + quick in-page filter
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = !banglaOnlyMode,
+                        onClick = { banglaOnlyMode = false },
+                        label = {
+                            Text(
+                                text = "EN + বাংলা",
+                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont)
+                            )
+                        },
+                        shape = RoundedCornerShape(50),
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = Color.White.copy(alpha = 0.08f),
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier.testTag("mode_bilingual_chip")
+                    )
+
+                    FilterChip(
+                        selected = banglaOnlyMode,
+                        onClick = { banglaOnlyMode = true },
+                        label = {
+                            Text(
+                                text = "শুধু বাংলা",
+                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont)
+                            )
+                        },
+                        shape = RoundedCornerShape(50),
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = Color.White.copy(alpha = 0.08f),
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier.testTag("mode_bangla_only_chip")
+                    )
+                }
+
+                if (pageLines.size > 4 || searchQuery.isNotBlank()) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search English or বাংলা on this page...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear filter")
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color.White.copy(alpha = 0.08f),
+                            unfocusedContainerColor = Color.White.copy(alpha = 0.05f),
+                            focusedBorderColor = SoftCyan,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.18f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("bangla_search_input")
+                    )
+                }
+            }
+
+            when {
+                !hasBookTranslations -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp)
+                            .glassPanel(shape = RoundedCornerShape(20.dp))
+                            .padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .background(SoftCyan.copy(alpha = 0.14f), CircleShape)
+                                .border(1.dp, SoftCyan.copy(alpha = 0.35f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Translate,
+                                contentDescription = null,
+                                tint = SoftCyan,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Text(
+                            text = "Offline Bangla Translation Not Bundled Yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "This downloaded manual does not include translations_bn.json yet. Once GitHub Actions converts this manual with GEMINI_API_KEY, tap Re-download High Quality on the bookshelf to get offline line-by-line Bangla.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                pageLines.isEmpty() -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 20.dp)
+                            .glassPanel(shape = RoundedCornerShape(20.dp))
+                            .padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "No Translatable Text on Page ${currentPageIndex + 1}",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "This page appears to be an image, diagram, or blank separator.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                filteredLines.isEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp)
+                            .glassPanel(shape = RoundedCornerShape(18.dp))
+                            .padding(20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No lines match \"$searchQuery\" on this page.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(430.dp),
+                        contentPadding = PaddingValues(bottom = 18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        itemsIndexed(filteredLines, key = { idx, item -> "${idx}_${item.en.hashCode()}" }) { idx, line ->
+                            val isCopied = copiedIndex == idx
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .glassPanel(shape = RoundedCornerShape(18.dp), highlighted = isCopied)
+                                    .testTag("translation_line_card_$idx")
+                                    .clickable {
+                                        val copyPayload = if (banglaOnlyMode) {
+                                            line.bn
+                                        } else {
+                                            "${line.en}\n${line.bn}"
+                                        }
+                                        clipboardManager.setText(AnnotatedString(copyPayload))
+                                        copiedIndex = idx
+                                    }
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = SoftCyan.copy(alpha = 0.14f),
+                                            border = BorderStroke(1.dp, SoftCyan.copy(alpha = 0.30f))
+                                        ) {
+                                            Text(
+                                                text = "Line ${idx + 1}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SoftCyan,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = "Copy line translation",
+                                                tint = if (isCopied) SoftCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = if (isCopied) "Copied" else "Tap to copy",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (isCopied) SoftCyan else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    if (!banglaOnlyMode) {
+                                        Text(
+                                            text = line.en,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                                    }
+
+                                    Text(
+                                        text = line.bn,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontFamily = NotoBengaliFont,
+                                            fontSize = 16.sp,
+                                            lineHeight = 26.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
         }
     }
 }

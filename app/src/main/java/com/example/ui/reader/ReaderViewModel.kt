@@ -7,9 +7,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.BookEntity
+import com.example.data.local.BookTranslationLoader
 import com.example.data.local.FolioDatabase
 import com.example.data.local.ReaderSurfaceTone
 import com.example.data.local.SettingsDataStore
+import com.example.data.local.TranslatedLine
 import com.example.data.repository.BookRepository
 import com.example.data.storage.WebpPageCache
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +35,7 @@ data class ReaderUiState(
     val surfaceTone: ReaderSurfaceTone = ReaderSurfaceTone.PAPER,
     val showPageOverlay: Boolean = true,
     val pageSoundEnabled: Boolean = true,
+    val translationsByPage: Map<Int, List<TranslatedLine>> = emptyMap(),
     val isLoading: Boolean = true,
     val errorMessage: String? = null
 )
@@ -102,6 +105,10 @@ class ReaderViewModel(
                 }
             }
 
+            val translations = withContext(Dispatchers.IO) {
+                BookTranslationLoader.loadByOneBasedPage(dirPath)
+            }
+
             val initialPage = book.lastReadPage.coerceIn(0, files.lastIndex)
             _uiState.update {
                 it.copy(
@@ -109,6 +116,7 @@ class ReaderViewModel(
                     pageFiles = files,
                     currentPageIndex = initialPage,
                     pageAspectRatio = aspect,
+                    translationsByPage = translations,
                     isLoading = false
                 )
             }

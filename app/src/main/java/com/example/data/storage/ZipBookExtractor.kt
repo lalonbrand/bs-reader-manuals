@@ -1,5 +1,6 @@
 package com.example.data.storage
 
+import com.example.data.local.BookTranslationLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
@@ -43,10 +44,22 @@ object ZipBookExtractor {
                 val baseName = File(entryName).name
                 val isMacJunk = entryName.startsWith("__MACOSX/") || baseName.startsWith("._")
 
-                if (!entry.isDirectory && !isMacJunk && isSupportedImage(baseName)) {
-                    val outFile = File(stagingDir, entryName)
+                val isImage = isSupportedImage(baseName)
+                val isTranslations = baseName.equals(BookTranslationLoader.TRANSLATIONS_FILENAME, ignoreCase = true)
+
+                if (!entry.isDirectory && !isMacJunk && (isImage || isTranslations)) {
+                    val outFile = if (isTranslations) {
+                        File(targetBookDir, BookTranslationLoader.TRANSLATIONS_FILENAME)
+                    } else {
+                        File(stagingDir, entryName)
+                    }
+                    val allowedPrefix = if (isTranslations) {
+                        targetBookDir.canonicalPath + File.separator
+                    } else {
+                        stagingCanonical + File.separator
+                    }
                     val outCanonical = outFile.canonicalPath
-                    if (!outCanonical.startsWith(stagingCanonical + File.separator)) {
+                    if (!outCanonical.startsWith(allowedPrefix)) {
                         throw SecurityException("Blocked unsafe zip path traversal: $entryName")
                     }
                     outFile.parentFile?.mkdirs()
@@ -59,8 +72,10 @@ object ZipBookExtractor {
                             read = zis.read(buffer)
                         }
                     }
-                    extractedCount++
-                    onProgress(extractedCount)
+                    if (isImage) {
+                        extractedCount++
+                        onProgress(extractedCount)
+                    }
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry

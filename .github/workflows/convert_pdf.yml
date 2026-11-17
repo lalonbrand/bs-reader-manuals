@@ -6,6 +6,8 @@ on:
     paths:
       - "incoming_pdfs/**"
       - "scripts/pdf_to_webp_book.py"
+      - "scripts/translation_prompt.txt"
+      - "scripts/translation_correction_prompt.txt"
 
   workflow_dispatch:
     inputs:
@@ -49,7 +51,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y poppler-utils
           python -m pip install --upgrade pip
-          pip install pdf2image pillow gdown
+          pip install pdf2image pillow gdown pymupdf
 
       - name: Convert PDF(s) to WebP zip & update catalog.json
         env:
@@ -62,6 +64,7 @@ jobs:
           INPUT_AUTHOR: ${{ inputs.author }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
           shopt -s nullglob nocaseglob
@@ -85,7 +88,7 @@ jobs:
             [ -n "$INPUT_AUTHOR" ] && CMD+=(--author "$INPUT_AUTHOR")
             "${CMD[@]}"
           else
-            SCRIPT_CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/pdf_to_webp_book.py' || true)
+            SCRIPT_CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/pdf_to_webp_book.py' 'scripts/translation_prompt.txt' 'scripts/translation_correction_prompt.txt' || true)
             if [ "$REBUILD_ALL" = "true" ] || [ -n "$SCRIPT_CHANGED" ] || ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
               TARGET_PDFS=(incoming_pdfs/*.pdf)
             else
