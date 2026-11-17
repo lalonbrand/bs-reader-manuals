@@ -117,6 +117,23 @@ def call_gemini_json(
         "generationConfig": {
             "temperature": 0.2,
             "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "items": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "index": {"type": "INTEGER"},
+                                "bn": {"type": "STRING"},
+                            },
+                            "required": ["index", "bn"],
+                        },
+                    }
+                },
+                "required": ["items"],
+            },
         },
     }
     data = json.dumps(body).encode("utf-8")
@@ -175,10 +192,11 @@ def translate_lines_with_gemini(
     )
     pass1_user = json.dumps({"items": indexed_items}, ensure_ascii=False)
     pass1_res = call_gemini_json(api_key, model, pass1_system, pass1_user)
+    pass1_items = pass1_res if isinstance(pass1_res, list) else pass1_res.get("items", [])
     bn_by_index = {
         int(item["index"]): str(item.get("bn", "")).strip()
-        for item in pass1_res.get("items", [])
-        if "index" in item
+        for item in pass1_items
+        if isinstance(item, dict) and "index" in item
     }
     first_pass_lines = [bn_by_index.get(i, lines[i]) for i in range(len(lines))]
 
@@ -200,22 +218,25 @@ def translate_lines_with_gemini(
         {"index": i, "en": lines[i], "bn": first_pass_lines[i]}
         for i in range(len(lines))
     ]
-    pass2_res = call_gemini_json(
-        api_key,
-        model,
-        pass2_system,
-        json.dumps({"items": pass2_items}, ensure_ascii=False),
-    )
-    corrected_by_index = {
-        int(item["index"]): str(item.get("bn", "")).strip()
-        for item in pass2_res.get("items", [])
-        if "index" in item
-    }
-
-    if api_delay_sec > 0:
-        time.sleep(api_delay_sec)
-
-    return [corrected_by_index.get(i, first_pass_lines[i]) for i in range(len(lines))]
+    try:
+        pass2_res = call_gemini_json(
+            api_key,
+            model,
+            pass2_system,
+            json.dumps({"items": pass2_items}, ensure_ascii=False),
+        )
+        pass2_list = pass2_res if isinstance(pass2_res, list) else pass2_res.get("items", [])
+        corrected_by_index = {
+            int(item["index"]): str(item.get("bn", "")).strip()
+            for item in pass2_list
+            if isinstance(item, dict) and "index" in item
+        }
+        if api_delay_sec > 0:
+            time.sleep(api_delay_sec)
+        return [corrected_by_index.get(i, first_pass_lines[i]) for i in range(len(lines))]
+    except Exception as exc:
+        print(f"Warning: second-pass correction failed ({exc}); keeping Pass 1 translation.")
+        return first_pass_lines
 
 
 def build_bangla_translations_bundle(

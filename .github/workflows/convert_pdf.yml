@@ -71,6 +71,12 @@ jobs:
           BASE_URL="https://${REPO_OWNER}.github.io/${REPO_NAME}"
           mkdir -p docs tmp_pdfs
 
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "::warning::GEMINI_API_KEY secret is not set — Bangla translations_bn.json will NOT be generated."
+          else
+            echo "GEMINI_API_KEY secret detected; enabling 2-pass Bangla translation."
+          fi
+
           if [ "$EVENT_NAME" = "repository_dispatch" ] || { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_FILE_ID" ]; }; then
             FILE_ID="${DISPATCH_FILE_ID:-$INPUT_FILE_ID}"
             RAW_NAME="${DISPATCH_FILE_NAME:-manual_${FILE_ID}.pdf}"
@@ -109,6 +115,15 @@ jobs:
                 --catalog docs/catalog.json
             done
           fi
+
+          for z in docs/*.zip; do
+            [ -f "$z" ] || continue
+            if unzip -l "$z" | grep -q "translations_bn.json"; then
+              echo "Verified translations_bn.json inside $z"
+            else
+              echo "::warning::translations_bn.json NOT found inside $z"
+            fi
+          done
 
           rm -rf tmp_pdfs
 
