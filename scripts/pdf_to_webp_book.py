@@ -235,7 +235,7 @@ def translate_lines_with_gemini(
             time.sleep(api_delay_sec)
         return [corrected_by_index.get(i, first_pass_lines[i]) for i in range(len(lines))]
     except Exception as exc:
-        print(f"Warning: second-pass correction failed ({exc}); keeping Pass 1 translation.")
+        print(f"Warning: second-pass correction failed ({exc}); keeping Pass 1 translation.", flush=True)
         return first_pass_lines
 
 
@@ -250,13 +250,13 @@ def build_bangla_translations_bundle(
     api_delay_sec: float = 2.0,
 ) -> dict | None:
     if not api_key.strip():
-        print("GEMINI_API_KEY not set — skipping Bangla translation generation.")
+        print("GEMINI_API_KEY not set — skipping Bangla translation generation.", flush=True)
         return None
     if fitz is None:
-        print("PyMuPDF not available — skipping Bangla translation generation.")
+        print("PyMuPDF not available — skipping Bangla translation generation.", flush=True)
         return None
     if not prompt_path.exists():
-        print(f"Translation prompt not found at {prompt_path} — skipping.")
+        print(f"Translation prompt not found at {prompt_path} — skipping.", flush=True)
         return None
 
     translation_prompt = prompt_path.read_text(encoding="utf-8")
@@ -269,10 +269,15 @@ def build_bangla_translations_bundle(
 
     line_cache: dict[str, str] = {}
     pages_payload: list[dict] = []
+    total_pages = len(reader_to_pdf_pages)
+    translated_pages_count = 0
+    total_translated_lines = 0
 
     for reader_page_num, pdf_page_num in reader_to_pdf_pages:
+        pct = round((reader_page_num / float(max(1, total_pages))) * 100)
         raw_lines = extracted_by_pdf_page.get(pdf_page_num, [])
         if not raw_lines:
+            print(f"[Bangla {reader_page_num}/{total_pages} | {pct}%] No text lines (image/blank page).", flush=True)
             pages_payload.append({"page": reader_page_num, "lines": []})
             continue
 
@@ -285,9 +290,11 @@ def build_bangla_translations_bundle(
                 seen_in_batch.add(line)
 
         if uncached_lines:
+            pass_label = "2-pass" if correction_prompt else "1-pass"
             print(
-                f"Translating page {reader_page_num} "
-                f"({len(uncached_lines)} new line(s)) with {model}..."
+                f"[Bangla {reader_page_num}/{total_pages} | {pct}%] "
+                f"Translating {len(uncached_lines)} line(s) ({pass_label}, {model})...",
+                flush=True,
             )
             try:
                 translated_batch = translate_lines_with_gemini(
@@ -300,8 +307,20 @@ def build_bangla_translations_bundle(
                 )
                 for src, dst in zip(uncached_lines, translated_batch):
                     line_cache[src] = dst if dst else src
+                print(
+                    f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Completed.",
+                    flush=True,
+                )
             except Exception as exc:
-                print(f"Warning: translation failed on page {reader_page_num}: {exc}")
+                print(
+                    f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Warning: translation failed ({exc})",
+                    flush=True,
+                )
+        else:
+            print(
+                f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Served from line cache.",
+                flush=True,
+            )
 
         page_lines_out = []
         for line in raw_lines:
@@ -312,7 +331,17 @@ def build_bangla_translations_bundle(
             if bn_text:
                 page_lines_out.append({"en": line, "bn": bn_text})
 
+        if page_lines_out:
+            translated_pages_count += 1
+            total_translated_lines += len(page_lines_out)
+
         pages_payload.append({"page": reader_page_num, "lines": page_lines_out})
+
+    print(
+        f"Bangla translation summary for '{pdf_path.name}': "
+        f"{translated_pages_count}/{total_pages} pages, {total_translated_lines} lines.",
+        flush=True,
+    )
 
     return {
         "version": 1,

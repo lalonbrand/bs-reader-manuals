@@ -85,7 +85,7 @@ jobs:
 
             gdown --id "$FILE_ID" -O "$PDF_PATH"
 
-            CMD=(python scripts/pdf_to_webp_book.py "$PDF_PATH" \
+            CMD=(python -u scripts/pdf_to_webp_book.py "$PDF_PATH" \
               --output-dir docs \
               --base-url "$BASE_URL" \
               --catalog docs/catalog.json)
@@ -109,21 +109,30 @@ jobs:
             for pdf in "${TARGET_PDFS[@]}"; do
               [ -f "$pdf" ] || continue
               echo "Converting $pdf ..."
-              python scripts/pdf_to_webp_book.py "$pdf" \
+              python -u scripts/pdf_to_webp_book.py "$pdf" \
                 --output-dir docs \
                 --base-url "$BASE_URL" \
                 --catalog docs/catalog.json
             done
           fi
 
-          for z in docs/*.zip; do
-            [ -f "$z" ] || continue
-            if unzip -l "$z" | grep -q "translations_bn.json"; then
-              echo "Verified translations_bn.json inside $z"
-            else
-              echo "::warning::translations_bn.json NOT found inside $z"
-            fi
-          done
+          {
+            echo '### BS Reader Manual Conversion & Bangla Translation Summary'
+            echo ''
+            echo '| Archive | Bangla Translation (`translations_bn.json`) |'
+            echo '|---|---|'
+            for z in docs/*.zip; do
+              [ -f "$z" ] || continue
+              zname=$(basename "$z")
+              if unzip -l "$z" | grep -q "translations_bn.json"; then
+                echo "Verified translations_bn.json inside $z" >&2
+                printf '| `%s` | Included |\n' "$zname"
+              else
+                echo "::warning::translations_bn.json NOT found inside $z" >&2
+                printf '| `%s` | Not included |\n' "$zname"
+              fi
+            done
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
           rm -rf tmp_pdfs
 
