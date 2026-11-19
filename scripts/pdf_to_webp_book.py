@@ -7,6 +7,8 @@ prompts, and updates catalog.json metadata.
 """
 
 import argparse
+import base64
+import io
 import json
 import os
 import re
@@ -103,40 +105,32 @@ def call_gemini_json(
     api_key: str,
     model: str,
     system_instruction: str,
-    user_payload: str,
+    user_parts: list[dict],
+    response_schema: dict | None = None,
     max_retries: int = 5,
     base_delay_sec: float = 2.0,
-) -> dict:
+) -> dict | list:
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent?key={api_key}"
     )
-    body = {
-        "systemInstruction": {"parts": [{"text": system_instruction}]},
-        "contents": [{"role": "user", "parts": [{"text": user_payload}]}],
-        "generationConfig": {
+
+    def build_body(include_schema: bool) -> bytes:
+        gen_cfg: dict = {
             "temperature": 0.2,
             "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "items": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "index": {"type": "INTEGER"},
-                                "bn": {"type": "STRING"},
-                            },
-                            "required": ["index", "bn"],
-                        },
-                    }
-                },
-                "required": ["items"],
-            },
-        },
-    }
-    data = json.dumps(body).encode("utf-8")
+        }
+        if include_schema and response_schema is not None:
+            gen_cfg["responseSchema"] = response_schema
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
+            "contents": [{"role": "user", "parts": user_parts}],
+            "generationConfig": gen_cfg,
+        }
+        return json.dumps(payload).encode("utf-8")
+
+    use_schema = response_schema is not None
+    data = build_body(use_schema)
 
     for attempt in range(max_retries + 1):
         req = urllib.request.Request(
@@ -146,7 +140,7 @@ def call_gemini_json(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 raw = resp.read().decode("utf-8")
                 parsed = json.loads(raw)
                 candidates = parsed.get("candidates") or []
@@ -156,16 +150,21 @@ def call_gemini_json(
                 return json.loads(text_out)
         except urllib.error.HTTPError as err:
             err_body = err.read().decode("utf-8", errors="ignore")
+            if err.code == 400 and use_schema:
+                print("Gemini HTTP 400 with responseSchema; retrying without schema...", flush=True)
+                use_schema = False
+                data = build_body(False)
+                continue
             if err.code in (429, 500, 502, 503, 504) and attempt < max_retries:
                 wait_sec = base_delay_sec * (2 ** attempt)
-                print(f"Gemini HTTP {err.code}; retrying in {wait_sec:.1f}s...")
+                print(f"Gemini HTTP {err.code}; retrying in {wait_sec:.1f}s...", flush=True)
                 time.sleep(wait_sec)
                 continue
             raise RuntimeError(f"Gemini API error HTTP {err.code}: {err_body[:400]}") from err
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as err:
             if attempt < max_retries:
                 wait_sec = base_delay_sec * (2 ** attempt)
-                print(f"Gemini transient error ({err}); retrying in {wait_sec:.1f}s...")
+                print(f"Gemini transient error ({err}); retrying in {wait_sec:.1f}s...", flush=True)
                 time.sleep(wait_sec)
                 continue
             raise
@@ -190,8 +189,28 @@ def translate_lines_with_gemini(
         '{"items": [{"index": 0, "bn": "..."}]}\n'
         "Every item's `bn` field must contain ONLY the natural Bangla translation for that line."
     )
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "items": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "index": {"type": "INTEGER"},
+                        "bn": {"type": "STRING"},
+                    },
+                    "required": ["index", "bn"],
+                },
+            }
+        },
+        "required": ["items"],
+    }
+
     pass1_user = json.dumps({"items": indexed_items}, ensure_ascii=False)
-    pass1_res = call_gemini_json(api_key, model, pass1_system, pass1_user)
+    pass1_res = call_gemini_json(
+        api_key, model, pass1_system, [{"text": pass1_user}], response_schema=schema
+    )
     pass1_items = pass1_res if isinstance(pass1_res, list) else pass1_res.get("items", [])
     bn_by_index = {
         int(item["index"]): str(item.get("bn", "")).strip()
@@ -223,7 +242,8 @@ def translate_lines_with_gemini(
             api_key,
             model,
             pass2_system,
-            json.dumps({"items": pass2_items}, ensure_ascii=False),
+            [{"text": json.dumps({"items": pass2_items}, ensure_ascii=False)}],
+            response_schema=schema,
         )
         pass2_list = pass2_res if isinstance(pass2_res, list) else pass2_res.get("items", [])
         corrected_by_index = {
@@ -239,9 +259,132 @@ def translate_lines_with_gemini(
         return first_pass_lines
 
 
+def translate_page_image_with_gemini(
+    api_key: str,
+    model: str,
+    translation_prompt: str,
+    correction_prompt: str | None,
+    page_image_path: Path,
+    api_delay_sec: float,
+) -> list[dict[str, str]]:
+    """Multimodal OCR + Bangla translation fallback for PDFs whose text is outlined/scanned."""
+    with Image.open(page_image_path) as img:
+        rgb = to_rgb_white_bg(img)
+        if rgb.width > 1800:
+            rgb = resize_to_width(rgb, 1800)
+        buf = io.BytesIO()
+        rgb.save(buf, format="JPEG", quality=88)
+        b64_jpeg = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    vision_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "items": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "index": {"type": "INTEGER"},
+                        "en": {"type": "STRING"},
+                        "bn": {"type": "STRING"},
+                    },
+                    "required": ["index", "en", "bn"],
+                },
+            }
+        },
+        "required": ["items"],
+    }
+
+    pass1_system = (
+        f"{translation_prompt.strip()}\n\n"
+        "MULTIMODAL OCR & JSON OUTPUT REQUIREMENT:\n"
+        "Read every visible English line, heading, bullet, table row, and footer from the "
+        "attached manual page image in natural top-to-bottom reading order. For each line, "
+        "put the exact English text in `en` and its natural Bangla translation in `bn`. "
+        "If the page is completely blank or contains only artwork with zero readable text, "
+        "return `{\"items\": []}`.\n"
+        "Return valid JSON strictly matching: "
+        '{"items": [{"index": 0, "en": "...", "bn": "..."}]}'
+    )
+
+    parts = [
+        {"inlineData": {"mimeType": "image/jpeg", "data": b64_jpeg}},
+        {"text": "Extract every visible text line in reading order and translate it to Bangla."},
+    ]
+    res = call_gemini_json(
+        api_key, model, pass1_system, parts, response_schema=vision_schema
+    )
+    raw_items = res if isinstance(res, list) else res.get("items", [])
+    extracted_pairs: list[dict[str, str]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        en_text = str(item.get("en", "")).strip()
+        bn_text = str(item.get("bn", "")).strip()
+        if en_text:
+            extracted_pairs.append({"en": en_text, "bn": bn_text or en_text})
+
+    if api_delay_sec > 0:
+        time.sleep(api_delay_sec)
+
+    if not extracted_pairs or not correction_prompt:
+        return extracted_pairs
+
+    pass2_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "items": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "index": {"type": "INTEGER"},
+                        "bn": {"type": "STRING"},
+                    },
+                    "required": ["index", "bn"],
+                },
+            }
+        },
+        "required": ["items"],
+    }
+    pass2_system = (
+        f"{correction_prompt.strip()}\n\n"
+        "JSON OUTPUT FORMAT REQUIREMENT:\n"
+        "Review each `{index, en, bn}` pair and return corrected Bangla lines strictly matching:\n"
+        '{"items": [{"index": 0, "bn": "..."}]}'
+    )
+    pass2_items = [
+        {"index": i, "en": pair["en"], "bn": pair["bn"]}
+        for i, pair in enumerate(extracted_pairs)
+    ]
+    try:
+        pass2_res = call_gemini_json(
+            api_key,
+            model,
+            pass2_system,
+            [{"text": json.dumps({"items": pass2_items}, ensure_ascii=False)}],
+            response_schema=pass2_schema,
+        )
+        pass2_list = pass2_res if isinstance(pass2_res, list) else pass2_res.get("items", [])
+        corrected_by_index = {
+            int(item["index"]): str(item.get("bn", "")).strip()
+            for item in pass2_list
+            if isinstance(item, dict) and "index" in item
+        }
+        if api_delay_sec > 0:
+            time.sleep(api_delay_sec)
+        return [
+            {"en": pair["en"], "bn": corrected_by_index.get(i, pair["bn"])}
+            for i, pair in enumerate(extracted_pairs)
+        ]
+    except Exception as exc:
+        print(f"Warning: vision second-pass correction failed ({exc}); keeping Pass 1 translation.", flush=True)
+        return extracted_pairs
+
+
 def build_bangla_translations_bundle(
     pdf_path: Path,
-    reader_to_pdf_pages: list[tuple[int, int]],
+    reader_pages_info: list[tuple[int, int, Path]],
     api_key: str,
     model: str,
     prompt_path: Path,
@@ -252,9 +395,6 @@ def build_bangla_translations_bundle(
     if not api_key.strip():
         print("GEMINI_API_KEY not set — skipping Bangla translation generation.", flush=True)
         return None
-    if fitz is None:
-        print("PyMuPDF not available — skipping Bangla translation generation.", flush=True)
-        return None
     if not prompt_path.exists():
         print(f"Translation prompt not found at {prompt_path} — skipping.", flush=True)
         return None
@@ -264,21 +404,56 @@ def build_bangla_translations_bundle(
     if enable_second_pass and correction_prompt_path and correction_prompt_path.exists():
         correction_prompt = correction_prompt_path.read_text(encoding="utf-8")
 
-    pdf_pages = [pdf_p for _, pdf_p in reader_to_pdf_pages]
+    pdf_pages = [pdf_p for _, pdf_p, _ in reader_pages_info]
     extracted_by_pdf_page = extract_page_lines(pdf_path, pdf_pages)
 
     line_cache: dict[str, str] = {}
     pages_payload: list[dict] = []
-    total_pages = len(reader_to_pdf_pages)
+    total_pages = len(reader_pages_info)
     translated_pages_count = 0
     total_translated_lines = 0
+    failed_pages_count = 0
 
-    for reader_page_num, pdf_page_num in reader_to_pdf_pages:
+    for reader_page_num, pdf_page_num, page_img_path in reader_pages_info:
         pct = round((reader_page_num / float(max(1, total_pages))) * 100)
         raw_lines = extracted_by_pdf_page.get(pdf_page_num, [])
+
         if not raw_lines:
-            print(f"[Bangla {reader_page_num}/{total_pages} | {pct}%] No text lines (image/blank page).", flush=True)
-            pages_payload.append({"page": reader_page_num, "lines": []})
+            print(
+                f"[Bangla {reader_page_num}/{total_pages} | {pct}%] "
+                f"No PDF text layer found; using Gemini Vision on page image...",
+                flush=True,
+            )
+            try:
+                vision_lines = translate_page_image_with_gemini(
+                    api_key=api_key,
+                    model=model,
+                    translation_prompt=translation_prompt,
+                    correction_prompt=correction_prompt,
+                    page_image_path=page_img_path,
+                    api_delay_sec=api_delay_sec,
+                )
+                if vision_lines:
+                    translated_pages_count += 1
+                    total_translated_lines += len(vision_lines)
+                    print(
+                        f"[Bangla {reader_page_num}/{total_pages} | {pct}%] "
+                        f"Vision translated {len(vision_lines)} line(s).",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[Bangla {reader_page_num}/{total_pages} | {pct}%] No visible text on image.",
+                        flush=True,
+                    )
+                pages_payload.append({"page": reader_page_num, "lines": vision_lines})
+            except Exception as exc:
+                failed_pages_count += 1
+                print(
+                    f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Warning: vision translation failed ({exc})",
+                    flush=True,
+                )
+                pages_payload.append({"page": reader_page_num, "lines": []})
             continue
 
         # Identify lines not yet cached that actually contain English words
@@ -312,6 +487,7 @@ def build_bangla_translations_bundle(
                     flush=True,
                 )
             except Exception as exc:
+                failed_pages_count += 1
                 print(
                     f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Warning: translation failed ({exc})",
                     flush=True,
@@ -339,9 +515,18 @@ def build_bangla_translations_bundle(
 
     print(
         f"Bangla translation summary for '{pdf_path.name}': "
-        f"{translated_pages_count}/{total_pages} pages, {total_translated_lines} lines.",
+        f"{translated_pages_count}/{total_pages} pages, {total_translated_lines} lines "
+        f"(failed pages: {failed_pages_count}).",
         flush=True,
     )
+
+    if total_translated_lines == 0:
+        print(
+            f"::warning::Zero translated lines generated for '{pdf_path.name}'; "
+            "omitting empty translations_bn.json.",
+            flush=True,
+        )
+        return None
 
     return {
         "version": 1,
@@ -389,7 +574,7 @@ def render_pdf_to_webp_zip(
         raise ValueError("PDF contains zero pages.")
 
     rendered_page_count = 0
-    reader_to_pdf_pages: list[tuple[int, int]] = []
+    reader_pages_info: list[tuple[int, int, Path]] = []
     save_kwargs = (
         {"format": "WEBP", "lossless": True, "quality": 100, "method": 6}
         if lossless
@@ -428,16 +613,16 @@ def render_pdf_to_webp_zip(
             page_img = fit_within_bounds(raw_page, max_page_width, max_page_height)
 
             rendered_page_count += 1
-            reader_to_pdf_pages.append((rendered_page_count, pdf_page))
             arc_name = f"page_{rendered_page_count:03d}.webp"
             page_tmp = tmp_path / arc_name
             page_img.save(page_tmp, **save_kwargs)
             files_to_zip.append((page_tmp, arc_name))
+            reader_pages_info.append((rendered_page_count, pdf_page, page_tmp))
 
-        # 3. Extract text lines & translate to Bangla (translations_bn.json) if API key is configured
+        # 3. Extract text lines (or use Gemini Vision on image/outlined pages) & translate to Bangla
         translations_bundle = build_bangla_translations_bundle(
             pdf_path=pdf_path,
-            reader_to_pdf_pages=reader_to_pdf_pages,
+            reader_pages_info=reader_pages_info,
             api_key=gemini_api_key,
             model=gemini_model,
             prompt_path=prompt_path,

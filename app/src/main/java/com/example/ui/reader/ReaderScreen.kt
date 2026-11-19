@@ -372,7 +372,7 @@ fun ReaderScreen(
                                 )
                             }
 
-                            val hasBanglaBook = uiState.translationsByPage.isNotEmpty()
+                            val hasBanglaBook = uiState.translationsByPage.values.any { it.isNotEmpty() }
                             Surface(
                                 shape = RoundedCornerShape(50),
                                 color = if (hasBanglaBook) {
@@ -769,7 +769,7 @@ fun ReaderScreen(
         BilingualTranslationBottomSheet(
             currentPageIndex = uiState.currentPageIndex,
             totalPages = uiState.pageFiles.size,
-            hasBookTranslations = uiState.translationsByPage.isNotEmpty(),
+            hasBookTranslations = uiState.translationsByPage.values.any { it.isNotEmpty() },
             pageLines = uiState.translationsByPage[oneBasedPage].orEmpty(),
             onSelectPage = viewModel::goToPage,
             onDismiss = { showBanglaSheet = false }
