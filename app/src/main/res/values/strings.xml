@@ -36,6 +36,6 @@
     <string name="credit_footer_subtitle">Curated by Mohidur Rahman Lalon • AQC – 10th Phase</string>
     <string name="credit_version_badge">BS Reader • v%1$s • © 2026</string>
     <string name="action_bangla_translate">বাংলা</string>
-    <string name="cd_bangla_translate">Open line-by-line Bangla translation</string>
+    <string name="cd_bangla_translate">Open Bangla paragraph translation</string>
     <string name="bangla_sheet_title">বাংলা অনুবাদ</string>
 </resources>

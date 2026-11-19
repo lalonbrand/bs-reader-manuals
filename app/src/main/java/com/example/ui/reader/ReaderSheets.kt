@@ -347,8 +347,9 @@ fun BilingualTranslationBottomSheet(
     val clipboardManager = LocalClipboardManager.current
 
     var searchQuery by remember { mutableStateOf("") }
-    var banglaOnlyMode by remember { mutableStateOf(false) }
+    var banglaOnlyMode by remember { mutableStateOf(true) }
     var copiedIndex by remember { mutableStateOf<Int?>(null) }
+    var copiedAllPage by remember { mutableStateOf(false) }
 
     LaunchedEffect(copiedIndex) {
         if (copiedIndex != null) {
@@ -357,14 +358,21 @@ fun BilingualTranslationBottomSheet(
         }
     }
 
-    val filteredLines = remember(pageLines, searchQuery) {
+    LaunchedEffect(copiedAllPage) {
+        if (copiedAllPage) {
+            delay(1500L)
+            copiedAllPage = false
+        }
+    }
+
+    val filteredParagraphs = remember(pageLines, searchQuery) {
         val trimmed = searchQuery.trim()
         if (trimmed.isBlank()) {
             pageLines
         } else {
-            pageLines.filter { line ->
-                line.en.contains(trimmed, ignoreCase = true) ||
-                    line.bn.contains(trimmed, ignoreCase = true)
+            pageLines.filter { para ->
+                para.en.contains(trimmed, ignoreCase = true) ||
+                    para.bn.contains(trimmed, ignoreCase = true)
             }
         }
     }
@@ -395,7 +403,8 @@ fun BilingualTranslationBottomSheet(
                     )
                     Text(
                         text = if (hasBookTranslations) {
-                            "Page ${currentPageIndex + 1} of $totalPages • ${pageLines.size} lines"
+                            val unit = if (pageLines.size == 1) "paragraph" else "paragraphs"
+                            "Page ${currentPageIndex + 1} of $totalPages • ${pageLines.size} $unit"
                         } else {
                             "Page ${currentPageIndex + 1} of $totalPages"
                         },
@@ -456,47 +465,88 @@ fun BilingualTranslationBottomSheet(
             }
 
             if (hasBookTranslations && pageLines.isNotEmpty()) {
-                // Display mode toggle + quick in-page filter
+                // Display mode toggle + Copy Page chip
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
-                        selected = !banglaOnlyMode,
-                        onClick = { banglaOnlyMode = false },
-                        label = {
-                            Text(
-                                text = "EN + বাংলা",
-                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont)
-                            )
-                        },
-                        shape = RoundedCornerShape(50),
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = Color.White.copy(alpha = 0.08f),
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier.testTag("mode_bilingual_chip")
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = banglaOnlyMode,
+                            onClick = { banglaOnlyMode = true },
+                            label = {
+                                Text(
+                                    text = "শুধু বাংলা",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont)
+                                )
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color.White.copy(alpha = 0.08f),
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier.testTag("mode_bangla_only_chip")
+                        )
 
-                    FilterChip(
-                        selected = banglaOnlyMode,
-                        onClick = { banglaOnlyMode = true },
-                        label = {
-                            Text(
-                                text = "শুধু বাংলা",
-                                style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont)
-                            )
-                        },
+                        FilterChip(
+                            selected = !banglaOnlyMode,
+                            onClick = { banglaOnlyMode = false },
+                            label = {
+                                Text(
+                                    text = "EN + বাংলা",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont)
+                                )
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color.White.copy(alpha = 0.08f),
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier.testTag("mode_bilingual_chip")
+                        )
+                    }
+
+                    Surface(
                         shape = RoundedCornerShape(50),
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = Color.White.copy(alpha = 0.08f),
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        color = if (copiedAllPage) SoftCyan.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (copiedAllPage) SoftCyan.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.16f)
                         ),
-                        modifier = Modifier.testTag("mode_bangla_only_chip")
-                    )
+                        modifier = Modifier
+                            .testTag("copy_page_translation_button")
+                            .clickable {
+                                val payload = filteredParagraphs.joinToString("\n\n") { para ->
+                                    if (banglaOnlyMode) para.bn else "${para.en}\n${para.bn}"
+                                }
+                                clipboardManager.setText(AnnotatedString(payload))
+                                copiedAllPage = true
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy page translation",
+                                tint = if (copiedAllPage) SoftCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (copiedAllPage) "Copied" else "Copy Page",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (copiedAllPage) SoftCyan else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 if (pageLines.size > 4 || searchQuery.isNotBlank()) {
@@ -559,7 +609,7 @@ fun BilingualTranslationBottomSheet(
                             textAlign = TextAlign.Center
                         )
                         Text(
-                            text = "This downloaded manual does not include translations_bn.json yet. Once GitHub Actions converts this manual with GEMINI_API_KEY, tap Re-download High Quality on the bookshelf to get offline line-by-line Bangla.",
+                            text = "This downloaded manual does not include translations_bn.json yet. Once GitHub Actions converts this manual with GEMINI_API_KEY, tap Re-download High Quality on the bookshelf to get offline paragraph-by-paragraph Bangla.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -592,7 +642,7 @@ fun BilingualTranslationBottomSheet(
                     }
                 }
 
-                filteredLines.isEmpty() -> {
+                filteredParagraphs.isEmpty() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -602,11 +652,68 @@ fun BilingualTranslationBottomSheet(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No lines match \"$searchQuery\" on this page.",
+                            text = "No paragraphs match \"$searchQuery\" on this page.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
+                    }
+                }
+
+                banglaOnlyMode -> {
+                    // Clean flowing paragraph-style document reader
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(430.dp)
+                            .glassPanel(shape = RoundedCornerShape(20.dp))
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            itemsIndexed(
+                                filteredParagraphs,
+                                key = { idx, item -> "bn_${idx}_${item.en.hashCode()}" }
+                            ) { idx, paragraph ->
+                                val isCopied = copiedIndex == idx
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (isCopied) SoftCyan.copy(alpha = 0.14f)
+                                            else Color.Transparent
+                                        )
+                                        .testTag("translation_paragraph_card_$idx")
+                                        .clickable {
+                                            clipboardManager.setText(AnnotatedString(paragraph.bn))
+                                            copiedIndex = idx
+                                        }
+                                        .padding(horizontal = if (isCopied) 10.dp else 2.dp, vertical = 4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = paragraph.bn,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontFamily = NotoBengaliFont,
+                                            fontSize = 16.sp,
+                                            lineHeight = 27.sp,
+                                            fontWeight = FontWeight.Normal
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (isCopied) {
+                                        Text(
+                                            text = "Copied paragraph",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SoftCyan
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -616,48 +723,41 @@ fun BilingualTranslationBottomSheet(
                             .fillMaxWidth()
                             .height(430.dp),
                         contentPadding = PaddingValues(bottom = 18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        itemsIndexed(filteredLines, key = { idx, item -> "${idx}_${item.en.hashCode()}" }) { idx, line ->
+                        itemsIndexed(
+                            filteredParagraphs,
+                            key = { idx, item -> "bi_${idx}_${item.en.hashCode()}" }
+                        ) { idx, paragraph ->
                             val isCopied = copiedIndex == idx
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .glassPanel(shape = RoundedCornerShape(18.dp), highlighted = isCopied)
-                                    .testTag("translation_line_card_$idx")
+                                    .testTag("translation_paragraph_card_$idx")
                                     .clickable {
-                                        val copyPayload = if (banglaOnlyMode) {
-                                            line.bn
-                                        } else {
-                                            "${line.en}\n${line.bn}"
-                                        }
-                                        clipboardManager.setText(AnnotatedString(copyPayload))
+                                        clipboardManager.setText(
+                                            AnnotatedString("${paragraph.en}\n\n${paragraph.bn}")
+                                        )
                                         copiedIndex = idx
                                     }
                             ) {
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Surface(
-                                            shape = RoundedCornerShape(50),
-                                            color = SoftCyan.copy(alpha = 0.14f),
-                                            border = BorderStroke(1.dp, SoftCyan.copy(alpha = 0.30f))
-                                        ) {
-                                            Text(
-                                                text = "Line ${idx + 1}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SoftCyan,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                            )
-                                        }
+                                        Text(
+                                            text = "Paragraph ${idx + 1}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SoftCyan
+                                        )
 
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
@@ -665,7 +765,7 @@ fun BilingualTranslationBottomSheet(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ContentCopy,
-                                                contentDescription = "Copy line translation",
+                                                contentDescription = "Copy paragraph translation",
                                                 tint = if (isCopied) SoftCyan else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(14.dp)
                                             )
@@ -677,22 +777,19 @@ fun BilingualTranslationBottomSheet(
                                         }
                                     }
 
-                                    if (!banglaOnlyMode) {
-                                        Text(
-                                            text = line.en,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
-                                    }
-
                                     Text(
-                                        text = line.bn,
+                                        text = paragraph.en,
+                                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                                    Text(
+                                        text = paragraph.bn,
                                         style = MaterialTheme.typography.bodyLarge.copy(
                                             fontFamily = NotoBengaliFont,
                                             fontSize = 16.sp,
-                                            lineHeight = 26.sp,
-                                            fontWeight = FontWeight.Medium
+                                            lineHeight = 27.sp,
+                                            fontWeight = FontWeight.Normal
                                         ),
                                         color = MaterialTheme.colorScheme.onSurface
                                     )

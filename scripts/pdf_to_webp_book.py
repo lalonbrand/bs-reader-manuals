@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from collections import deque
 from pathlib import Path
 
 from PIL import Image
@@ -69,8 +70,26 @@ def fit_within_bounds(img: Image.Image, max_width: int, max_height: int) -> Imag
     return img.resize((target_w, target_h), LANCZOS)
 
 
-def extract_page_lines(pdf_path: Path, page_numbers_1based: list[int]) -> dict[int, list[str]]:
-    """Extracts ordered, cleaned text lines per 1-based PDF page number using PyMuPDF."""
+PARA_START_RE = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+|[•●▪▫\-–—*]\s+|[A-Za-z]\)\s+)")
+
+
+def _join_wrapped_lines(parts: list[str]) -> str:
+    joined = ""
+    for part in parts:
+        chunk = part.strip()
+        if not chunk:
+            continue
+        if not joined:
+            joined = chunk
+        elif joined.endswith("-") and len(joined) >= 2 and joined[-2].isalpha() and chunk[0].islower():
+            joined = joined[:-1] + chunk
+        else:
+            joined = f"{joined} {chunk}"
+    return re.sub(r"\s+", " ", joined).strip()
+
+
+def extract_page_paragraphs(pdf_path: Path, page_numbers_1based: list[int]) -> dict[int, list[str]]:
+    """Extracts ordered, cohesive paragraphs & headings per 1-based PDF page using PyMuPDF."""
     if fitz is None:
         print("Warning: PyMuPDF (fitz) is not installed; skipping text extraction.")
         return {}
@@ -81,16 +100,103 @@ def extract_page_lines(pdf_path: Path, page_numbers_1based: list[int]) -> dict[i
         for pdf_page_num in page_numbers_1based:
             page = doc[pdf_page_num - 1]
             text_dict = page.get_text("dict", sort=True)
-            lines_out: list[str] = []
-            for block in text_dict.get("blocks", []):
+
+            # Collect row entries: (block_idx, y0, y1, x0, font_size, text)
+            block_rows: list[tuple[int, float, float, float, float, str]] = []
+            for block_idx, block in enumerate(text_dict.get("blocks", [])):
                 if block.get("type", 0) != 0:
                     continue
+                fragments: list[tuple[float, float, float, float, float, str]] = []
                 for line in block.get("lines", []):
-                    spans_text = "".join(span.get("text", "") for span in line.get("spans", []))
+                    spans = line.get("spans", [])
+                    spans_text = "".join(span.get("text", "") for span in spans)
                     cleaned = re.sub(r"\s+", " ", spans_text).strip()
-                    if cleaned:
-                        lines_out.append(cleaned)
-            pages_map[pdf_page_num] = lines_out
+                    if not cleaned:
+                        continue
+                    bbox = line.get("bbox") or (0.0, 0.0, 0.0, 0.0)
+                    sizes = [float(span.get("size", 10.0)) for span in spans if span.get("text", "").strip()]
+                    avg_size = sum(sizes) / len(sizes) if sizes else 10.0
+                    y0 = float(bbox[1])
+                    y1 = float(bbox[3])
+                    x0 = float(bbox[0])
+                    y_mid = (y0 + y1) / 2.0
+                    fragments.append((y_mid, y0, y1, x0, avg_size, cleaned))
+
+                fragments.sort(key=lambda item: (round(item[0] / 4.0), item[3]))
+                rows_in_block: list[list[tuple[float, float, float, float, float, str]]] = []
+                for frag in fragments:
+                    if rows_in_block and abs(frag[0] - rows_in_block[-1][0][0]) <= 4.5:
+                        rows_in_block[-1].append(frag)
+                    else:
+                        rows_in_block.append([frag])
+
+                for row in rows_in_block:
+                    row.sort(key=lambda item: item[3])
+                    merged_text = " ".join(part[5] for part in row).strip()
+                    if merged_text:
+                        r_y0 = min(part[1] for part in row)
+                        r_y1 = max(part[2] for part in row)
+                        r_x0 = row[0][3]
+                        r_size = sum(part[4] for part in row) / len(row)
+                        block_rows.append((block_idx, r_y0, r_y1, r_x0, r_size, merged_text))
+
+            paragraphs: list[str] = []
+            current_parts: list[str] = []
+            prev_row: tuple[int, float, float, float, float, str] | None = None
+
+            for row in block_rows:
+                b_idx, y0, y1, x0, fsize, text = row
+                if prev_row is None:
+                    current_parts = [text]
+                    prev_row = row
+                    continue
+
+                p_b_idx, p_y0, p_y1, p_x0, p_fsize, p_text = prev_row
+                line_height = max(8.0, p_y1 - p_y0)
+                v_gap = y0 - p_y1
+                same_block = b_idx == p_b_idx
+                font_changed = abs(fsize - p_fsize) >= 1.2
+                new_list_or_heading = bool(PARA_START_RE.match(text))
+                prev_looks_like_heading = (
+                    len(p_text) <= 75
+                    and not p_text.endswith((".", ",", ";", ":"))
+                    and bool(re.match(r"^\d+(?:\.\d+)*\.?\s+[A-Z]", p_text) or p_text.istitle() or p_text.isupper())
+                )
+                large_gap = v_gap > (line_height * 0.65)
+                tight_continuation = (
+                    not same_block
+                    and v_gap >= -4.0
+                    and v_gap <= (line_height * 0.75)
+                    and not font_changed
+                    and not new_list_or_heading
+                    and not prev_looks_like_heading
+                    and not p_text.endswith((".", "!", "?"))
+                )
+
+                should_split = (
+                    font_changed
+                    or new_list_or_heading
+                    or prev_looks_like_heading
+                    or large_gap
+                    or (not same_block and not tight_continuation)
+                )
+
+                if should_split:
+                    para = _join_wrapped_lines(current_parts)
+                    if para:
+                        paragraphs.append(para)
+                    current_parts = [text]
+                else:
+                    current_parts.append(text)
+
+                prev_row = row
+
+            if current_parts:
+                para = _join_wrapped_lines(current_parts)
+                if para:
+                    paragraphs.append(para)
+
+            pages_map[pdf_page_num] = paragraphs
     finally:
         doc.close()
     return pages_map
@@ -101,6 +207,44 @@ def is_translatable_line(text: str) -> bool:
     return bool(re.search(r"[A-Za-z]{2,}", text))
 
 
+def has_bangla_script(text: str) -> bool:
+    return bool(re.search(r"[\u0980-\u09FF]", text))
+
+
+class GeminiRateLimiter:
+    """Enforces a strict requests-per-minute (RPM) cap using a 60s sliding window + even spacing."""
+
+    def __init__(self, rpm: float = 10.0):
+        self.rpm = max(1.0, float(rpm))
+        self.min_interval_sec = 60.0 / self.rpm
+        self.max_per_window = max(1, int(self.rpm))
+        self._timestamps: deque[float] = deque()
+
+    def wait_for_slot(self) -> None:
+        now = time.monotonic()
+
+        # 1. Enforce even spacing (e.g., 6.0s between request starts for 10 RPM)
+        if self._timestamps:
+            elapsed_since_last = now - self._timestamps[-1]
+            if elapsed_since_last < self.min_interval_sec:
+                time.sleep(self.min_interval_sec - elapsed_since_last)
+                now = time.monotonic()
+
+        # 2. Enforce strict sliding 60s window cap
+        while self._timestamps and (now - self._timestamps[0]) >= 60.0:
+            self._timestamps.popleft()
+
+        if len(self._timestamps) >= self.max_per_window:
+            wait_sec = 60.0 - (now - self._timestamps[0]) + 0.05
+            if wait_sec > 0:
+                time.sleep(wait_sec)
+            now = time.monotonic()
+            while self._timestamps and (now - self._timestamps[0]) >= 60.0:
+                self._timestamps.popleft()
+
+        self._timestamps.append(now)
+
+
 def call_gemini_json(
     api_key: str,
     model: str,
@@ -108,7 +252,8 @@ def call_gemini_json(
     user_parts: list[dict],
     response_schema: dict | None = None,
     max_retries: int = 5,
-    base_delay_sec: float = 2.0,
+    base_delay_sec: float = 4.0,
+    rate_limiter: GeminiRateLimiter | None = None,
 ) -> dict | list:
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -133,6 +278,8 @@ def call_gemini_json(
     data = build_body(use_schema)
 
     for attempt in range(max_retries + 1):
+        if rate_limiter is not None:
+            rate_limiter.wait_for_slot()
         req = urllib.request.Request(
             url,
             data=data,
@@ -156,7 +303,14 @@ def call_gemini_json(
                 data = build_body(False)
                 continue
             if err.code in (429, 500, 502, 503, 504) and attempt < max_retries:
-                wait_sec = base_delay_sec * (2 ** attempt)
+                retry_after = err.headers.get("Retry-After") if err.headers else None
+                try:
+                    header_wait = float(retry_after) if retry_after else 0.0
+                except ValueError:
+                    header_wait = 0.0
+                wait_sec = min(90.0, max(header_wait, 15.0 if err.code == 429 else base_delay_sec * (2 ** attempt)))
+                if err.code == 429:
+                    wait_sec = min(90.0, max(header_wait, 15.0 * (attempt + 1)))
                 print(f"Gemini HTTP {err.code}; retrying in {wait_sec:.1f}s...", flush=True)
                 time.sleep(wait_sec)
                 continue
@@ -170,24 +324,38 @@ def call_gemini_json(
             raise
 
 
-def translate_lines_with_gemini(
+def extract_items_list(res: dict | list) -> list:
+    if isinstance(res, list):
+        return res
+    if isinstance(res, dict):
+        if isinstance(res.get("items"), list):
+            return res["items"]
+        for val in res.values():
+            if isinstance(val, list):
+                return val
+    return []
+
+
+def translate_paragraphs_with_gemini(
     api_key: str,
     model: str,
     translation_prompt: str,
     correction_prompt: str | None,
-    lines: list[str],
-    api_delay_sec: float,
+    paragraphs: list[str],
+    rate_limiter: GeminiRateLimiter,
 ) -> list[str]:
-    indexed_items = [{"index": i, "en": line} for i, line in enumerate(lines)]
+    indexed_items = [{"index": i, "en": para} for i, para in enumerate(paragraphs)]
 
     pass1_system = (
         f"{translation_prompt.strip()}\n\n"
         "JSON OUTPUT FORMAT REQUIREMENT:\n"
-        "You will receive a JSON array of objects `{index, en}` representing lines from one page "
-        "in top-to-bottom reading order. Preserve the exact same count and `index` values. "
+        "You will receive a JSON array of objects `{index, en}` representing complete paragraphs "
+        "and headings from one manual page in top-to-bottom reading order. Preserve the exact same "
+        "count and `index` values. Translate strictly what is written in each `en` paragraph—do NOT "
+        "add extra explanations, parenthetical notes, examples, or commentary that are not in the PDF.\n"
         "Return a valid JSON object strictly matching:\n"
         '{"items": [{"index": 0, "bn": "..."}]}\n'
-        "Every item's `bn` field must contain ONLY the natural Bangla translation for that line."
+        "Every item's `bn` field must contain ONLY the natural Bangla paragraph translation."
     )
     schema = {
         "type": "OBJECT",
@@ -209,33 +377,36 @@ def translate_lines_with_gemini(
 
     pass1_user = json.dumps({"items": indexed_items}, ensure_ascii=False)
     pass1_res = call_gemini_json(
-        api_key, model, pass1_system, [{"text": pass1_user}], response_schema=schema
+        api_key,
+        model,
+        pass1_system,
+        [{"text": pass1_user}],
+        response_schema=schema,
+        rate_limiter=rate_limiter,
     )
-    pass1_items = pass1_res if isinstance(pass1_res, list) else pass1_res.get("items", [])
+    pass1_items = extract_items_list(pass1_res)
     bn_by_index = {
         int(item["index"]): str(item.get("bn", "")).strip()
         for item in pass1_items
         if isinstance(item, dict) and "index" in item
     }
-    first_pass_lines = [bn_by_index.get(i, lines[i]) for i in range(len(lines))]
-
-    if api_delay_sec > 0:
-        time.sleep(api_delay_sec)
+    first_pass_paragraphs = [bn_by_index.get(i, "") for i in range(len(paragraphs))]
 
     if not correction_prompt:
-        return first_pass_lines
+        return first_pass_paragraphs
 
     pass2_system = (
         f"{correction_prompt.strip()}\n\n"
         "JSON OUTPUT FORMAT REQUIREMENT:\n"
         "You will receive a JSON array of objects `{index, en, bn}` where `en` is the original "
-        "English line and `bn` is the draft Bangla translation. Preserve the exact count and "
-        "`index` values. Return a valid JSON object strictly matching:\n"
+        "English paragraph and `bn` is the draft Bangla paragraph translation. Remove any extra "
+        "explanations not present in `en` and keep natural Bangladeshi Bangla flow. Preserve the exact "
+        "count and `index` values. Return a valid JSON object strictly matching:\n"
         '{"items": [{"index": 0, "bn": "..."}]}'
     )
     pass2_items = [
-        {"index": i, "en": lines[i], "bn": first_pass_lines[i]}
-        for i in range(len(lines))
+        {"index": i, "en": paragraphs[i], "bn": first_pass_paragraphs[i] or paragraphs[i]}
+        for i in range(len(paragraphs))
     ]
     try:
         pass2_res = call_gemini_json(
@@ -244,19 +415,18 @@ def translate_lines_with_gemini(
             pass2_system,
             [{"text": json.dumps({"items": pass2_items}, ensure_ascii=False)}],
             response_schema=schema,
+            rate_limiter=rate_limiter,
         )
-        pass2_list = pass2_res if isinstance(pass2_res, list) else pass2_res.get("items", [])
+        pass2_list = extract_items_list(pass2_res)
         corrected_by_index = {
             int(item["index"]): str(item.get("bn", "")).strip()
             for item in pass2_list
             if isinstance(item, dict) and "index" in item
         }
-        if api_delay_sec > 0:
-            time.sleep(api_delay_sec)
-        return [corrected_by_index.get(i, first_pass_lines[i]) for i in range(len(lines))]
+        return [corrected_by_index.get(i, first_pass_paragraphs[i]) for i in range(len(paragraphs))]
     except Exception as exc:
         print(f"Warning: second-pass correction failed ({exc}); keeping Pass 1 translation.", flush=True)
-        return first_pass_lines
+        return first_pass_paragraphs
 
 
 def translate_page_image_with_gemini(
@@ -265,7 +435,7 @@ def translate_page_image_with_gemini(
     translation_prompt: str,
     correction_prompt: str | None,
     page_image_path: Path,
-    api_delay_sec: float,
+    rate_limiter: GeminiRateLimiter,
 ) -> list[dict[str, str]]:
     """Multimodal OCR + Bangla translation fallback for PDFs whose text is outlined/scanned."""
     with Image.open(page_image_path) as img:
@@ -297,11 +467,12 @@ def translate_page_image_with_gemini(
 
     pass1_system = (
         f"{translation_prompt.strip()}\n\n"
-        "MULTIMODAL OCR & JSON OUTPUT REQUIREMENT:\n"
-        "Read every visible English line, heading, bullet, table row, and footer from the "
-        "attached manual page image in natural top-to-bottom reading order. For each line, "
-        "put the exact English text in `en` and its natural Bangla translation in `bn`. "
-        "If the page is completely blank or contains only artwork with zero readable text, "
+        "MULTIMODAL OCR & PARAGRAPH JSON OUTPUT REQUIREMENT:\n"
+        "Read the attached manual page image in natural top-to-bottom reading order and group text "
+        "into complete headings, paragraphs, and list items (do NOT split body paragraphs into "
+        "individual visual lines). For each paragraph/heading, put the exact English text in `en` and "
+        "its strictly faithful Bangla translation in `bn`—do NOT add extra explanations or details "
+        "not printed on the page. If the page is blank or artwork-only with zero readable text, "
         "return `{\"items\": []}`.\n"
         "Return valid JSON strictly matching: "
         '{"items": [{"index": 0, "en": "...", "bn": "..."}]}'
@@ -309,23 +480,25 @@ def translate_page_image_with_gemini(
 
     parts = [
         {"inlineData": {"mimeType": "image/jpeg", "data": b64_jpeg}},
-        {"text": "Extract every visible text line in reading order and translate it to Bangla."},
+        {"text": "Extract every visible heading and paragraph in reading order and translate strictly to Bangla without extra explanations."},
     ]
     res = call_gemini_json(
-        api_key, model, pass1_system, parts, response_schema=vision_schema
+        api_key,
+        model,
+        pass1_system,
+        parts,
+        response_schema=vision_schema,
+        rate_limiter=rate_limiter,
     )
-    raw_items = res if isinstance(res, list) else res.get("items", [])
+    raw_items = extract_items_list(res)
     extracted_pairs: list[dict[str, str]] = []
     for item in raw_items:
         if not isinstance(item, dict):
             continue
         en_text = str(item.get("en", "")).strip()
         bn_text = str(item.get("bn", "")).strip()
-        if en_text:
-            extracted_pairs.append({"en": en_text, "bn": bn_text or en_text})
-
-    if api_delay_sec > 0:
-        time.sleep(api_delay_sec)
+        if en_text and is_translatable_line(en_text) and bn_text:
+            extracted_pairs.append({"en": en_text, "bn": bn_text})
 
     if not extracted_pairs or not correction_prompt:
         return extracted_pairs
@@ -364,15 +537,14 @@ def translate_page_image_with_gemini(
             pass2_system,
             [{"text": json.dumps({"items": pass2_items}, ensure_ascii=False)}],
             response_schema=pass2_schema,
+            rate_limiter=rate_limiter,
         )
-        pass2_list = pass2_res if isinstance(pass2_res, list) else pass2_res.get("items", [])
+        pass2_list = extract_items_list(pass2_res)
         corrected_by_index = {
             int(item["index"]): str(item.get("bn", "")).strip()
             for item in pass2_list
             if isinstance(item, dict) and "index" in item
         }
-        if api_delay_sec > 0:
-            time.sleep(api_delay_sec)
         return [
             {"en": pair["en"], "bn": corrected_by_index.get(i, pair["bn"])}
             for i, pair in enumerate(extracted_pairs)
@@ -390,7 +562,7 @@ def build_bangla_translations_bundle(
     prompt_path: Path,
     correction_prompt_path: Path | None,
     enable_second_pass: bool = True,
-    api_delay_sec: float = 2.0,
+    requests_per_minute: float = 10.0,
 ) -> dict | None:
     if not api_key.strip():
         print("GEMINI_API_KEY not set — skipping Bangla translation generation.", flush=True)
@@ -399,46 +571,59 @@ def build_bangla_translations_bundle(
         print(f"Translation prompt not found at {prompt_path} — skipping.", flush=True)
         return None
 
+    rate_limiter = GeminiRateLimiter(rpm=requests_per_minute)
+    print(
+        f"Rate limiter active: {rate_limiter.rpm:.1f} requests/minute "
+        f"(1 request every {rate_limiter.min_interval_sec:.1f}s).",
+        flush=True,
+    )
+
     translation_prompt = prompt_path.read_text(encoding="utf-8")
     correction_prompt = None
     if enable_second_pass and correction_prompt_path and correction_prompt_path.exists():
         correction_prompt = correction_prompt_path.read_text(encoding="utf-8")
 
     pdf_pages = [pdf_p for _, pdf_p, _ in reader_pages_info]
-    extracted_by_pdf_page = extract_page_lines(pdf_path, pdf_pages)
+    extracted_by_pdf_page = extract_page_paragraphs(pdf_path, pdf_pages)
 
-    line_cache: dict[str, str] = {}
+    para_cache: dict[str, str] = {}
     pages_payload: list[dict] = []
     total_pages = len(reader_pages_info)
     translated_pages_count = 0
-    total_translated_lines = 0
+    total_translated_paragraphs = 0
+    actual_bangla_paragraphs_count = 0
     failed_pages_count = 0
 
     for reader_page_num, pdf_page_num, page_img_path in reader_pages_info:
         pct = round((reader_page_num / float(max(1, total_pages))) * 100)
-        raw_lines = extracted_by_pdf_page.get(pdf_page_num, [])
+        raw_paragraphs = extracted_by_pdf_page.get(pdf_page_num, [])
+        translatable_raw = [para for para in raw_paragraphs if is_translatable_line(para)]
 
-        if not raw_lines:
+        if not translatable_raw:
+            reason = "No PDF text layer" if not raw_paragraphs else "Only bare numbers/symbols in PDF text layer"
             print(
                 f"[Bangla {reader_page_num}/{total_pages} | {pct}%] "
-                f"No PDF text layer found; using Gemini Vision on page image...",
+                f"{reason}; using Gemini Vision on page image...",
                 flush=True,
             )
             try:
-                vision_lines = translate_page_image_with_gemini(
+                vision_paragraphs = translate_page_image_with_gemini(
                     api_key=api_key,
                     model=model,
                     translation_prompt=translation_prompt,
                     correction_prompt=correction_prompt,
                     page_image_path=page_img_path,
-                    api_delay_sec=api_delay_sec,
+                    rate_limiter=rate_limiter,
                 )
-                if vision_lines:
+                if vision_paragraphs:
                     translated_pages_count += 1
-                    total_translated_lines += len(vision_lines)
+                    total_translated_paragraphs += len(vision_paragraphs)
+                    actual_bangla_paragraphs_count += sum(
+                        1 for pair in vision_paragraphs if has_bangla_script(pair.get("bn", ""))
+                    )
                     print(
                         f"[Bangla {reader_page_num}/{total_pages} | {pct}%] "
-                        f"Vision translated {len(vision_lines)} line(s).",
+                        f"Vision translated {len(vision_paragraphs)} paragraph(s).",
                         flush=True,
                     )
                 else:
@@ -446,42 +631,44 @@ def build_bangla_translations_bundle(
                         f"[Bangla {reader_page_num}/{total_pages} | {pct}%] No visible text on image.",
                         flush=True,
                     )
-                pages_payload.append({"page": reader_page_num, "lines": vision_lines})
+                pages_payload.append({"page": reader_page_num, "paragraphs": vision_paragraphs})
             except Exception as exc:
                 failed_pages_count += 1
                 print(
                     f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Warning: vision translation failed ({exc})",
                     flush=True,
                 )
-                pages_payload.append({"page": reader_page_num, "lines": []})
+                pages_payload.append({"page": reader_page_num, "paragraphs": []})
             continue
 
-        # Identify lines not yet cached that actually contain English words
-        uncached_lines: list[str] = []
+        # Identify paragraphs not yet cached that actually contain English words
+        uncached_paragraphs: list[str] = []
         seen_in_batch: set[str] = set()
-        for line in raw_lines:
-            if is_translatable_line(line) and line not in line_cache and line not in seen_in_batch:
-                uncached_lines.append(line)
-                seen_in_batch.add(line)
+        for para in translatable_raw:
+            if para not in para_cache and para not in seen_in_batch:
+                uncached_paragraphs.append(para)
+                seen_in_batch.add(para)
 
-        if uncached_lines:
+        if uncached_paragraphs:
             pass_label = "2-pass" if correction_prompt else "1-pass"
             print(
                 f"[Bangla {reader_page_num}/{total_pages} | {pct}%] "
-                f"Translating {len(uncached_lines)} line(s) ({pass_label}, {model})...",
+                f"Translating {len(uncached_paragraphs)} paragraph(s) ({pass_label}, {model})...",
                 flush=True,
             )
             try:
-                translated_batch = translate_lines_with_gemini(
+                translated_batch = translate_paragraphs_with_gemini(
                     api_key=api_key,
                     model=model,
                     translation_prompt=translation_prompt,
                     correction_prompt=correction_prompt,
-                    lines=uncached_lines,
-                    api_delay_sec=api_delay_sec,
+                    paragraphs=uncached_paragraphs,
+                    rate_limiter=rate_limiter,
                 )
-                for src, dst in zip(uncached_lines, translated_batch):
-                    line_cache[src] = dst if dst else src
+                for src, dst in zip(uncached_paragraphs, translated_batch):
+                    cleaned_dst = dst.strip() if dst else ""
+                    if cleaned_dst:
+                        para_cache[src] = cleaned_dst
                 print(
                     f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Completed.",
                     flush=True,
@@ -494,35 +681,34 @@ def build_bangla_translations_bundle(
                 )
         else:
             print(
-                f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Served from line cache.",
+                f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Served from paragraph cache.",
                 flush=True,
             )
 
-        page_lines_out = []
-        for line in raw_lines:
-            if not is_translatable_line(line):
-                bn_text = line
-            else:
-                bn_text = line_cache.get(line, "")
+        page_paragraphs_out = []
+        for para in translatable_raw:
+            bn_text = para_cache.get(para, "").strip()
             if bn_text:
-                page_lines_out.append({"en": line, "bn": bn_text})
+                page_paragraphs_out.append({"en": para, "bn": bn_text})
+                if has_bangla_script(bn_text):
+                    actual_bangla_paragraphs_count += 1
 
-        if page_lines_out:
+        if page_paragraphs_out:
             translated_pages_count += 1
-            total_translated_lines += len(page_lines_out)
+            total_translated_paragraphs += len(page_paragraphs_out)
 
-        pages_payload.append({"page": reader_page_num, "lines": page_lines_out})
+        pages_payload.append({"page": reader_page_num, "paragraphs": page_paragraphs_out})
 
     print(
         f"Bangla translation summary for '{pdf_path.name}': "
-        f"{translated_pages_count}/{total_pages} pages, {total_translated_lines} lines "
-        f"(failed pages: {failed_pages_count}).",
+        f"{translated_pages_count}/{total_pages} pages, {total_translated_paragraphs} paragraphs "
+        f"({actual_bangla_paragraphs_count} with Bangla script, failed pages: {failed_pages_count}).",
         flush=True,
     )
 
-    if total_translated_lines == 0:
+    if total_translated_paragraphs == 0 or actual_bangla_paragraphs_count == 0:
         print(
-            f"::warning::Zero translated lines generated for '{pdf_path.name}'; "
+            f"::warning::Zero real Bangla translations generated for '{pdf_path.name}'; "
             "omitting empty translations_bn.json.",
             flush=True,
         )
@@ -558,7 +744,7 @@ def render_pdf_to_webp_zip(
     prompt_path: Path = DEFAULT_PROMPT_PATH,
     correction_prompt_path: Path = DEFAULT_CORRECTION_PROMPT_PATH,
     enable_second_pass: bool = True,
-    api_delay_sec: float = 2.0,
+    requests_per_minute: float = 10.0,
 ) -> dict:
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -628,7 +814,7 @@ def render_pdf_to_webp_zip(
             prompt_path=prompt_path,
             correction_prompt_path=correction_prompt_path,
             enable_second_pass=enable_second_pass,
-            api_delay_sec=api_delay_sec,
+            requests_per_minute=requests_per_minute,
         )
         if translations_bundle is not None:
             trans_tmp = tmp_path / "translations_bn.json"
@@ -762,7 +948,8 @@ def main() -> None:
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT_PATH)
     parser.add_argument("--correction-prompt-file", type=Path, default=DEFAULT_CORRECTION_PROMPT_PATH)
     parser.add_argument("--no-second-pass", action="store_true")
-    parser.add_argument("--api-delay", type=float, default=2.0)
+    parser.add_argument("--rpm", type=float, default=10.0, help="Max Gemini API requests per minute (default: 10)")
+    parser.add_argument("--api-delay", type=float, default=None, help="Optional legacy delay in seconds (overrides --rpm if > 0)")
     args = parser.parse_args()
 
     if args.prune_only:
@@ -782,6 +969,9 @@ def main() -> None:
     title = args.title or args.pdf.stem.replace("_", " ").replace("-", " ").title()
     book_id = args.book_id or slugify(title)
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    effective_rpm = args.rpm
+    if args.api_delay is not None and args.api_delay > 0:
+        effective_rpm = 60.0 / args.api_delay
 
     entry = render_pdf_to_webp_zip(
         pdf_path=args.pdf,
@@ -801,7 +991,7 @@ def main() -> None:
         prompt_path=args.prompt_file,
         correction_prompt_path=args.correction_prompt_file,
         enable_second_pass=not args.no_second_pass,
-        api_delay_sec=args.api_delay,
+        requests_per_minute=effective_rpm,
     )
 
     if args.catalog:

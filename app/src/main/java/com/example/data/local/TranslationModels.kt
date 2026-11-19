@@ -13,8 +13,12 @@ data class TranslatedLine(
 @Serializable
 data class TranslatedPage(
     val page: Int,
+    val paragraphs: List<TranslatedLine> = emptyList(),
     val lines: List<TranslatedLine> = emptyList()
-)
+) {
+    fun resolvedParagraphs(): List<TranslatedLine> =
+        if (paragraphs.isNotEmpty()) paragraphs else lines
+}
 
 @Serializable
 data class BookTranslationBundle(
@@ -37,7 +41,12 @@ object BookTranslationLoader {
         if (!file.exists() || !file.isFile) return emptyMap()
         return runCatching {
             val bundle = jsonParser.decodeFromString<BookTranslationBundle>(file.readText(Charsets.UTF_8))
-            bundle.pages.associate { it.page to it.lines }
+            bundle.pages.associate { page ->
+                val meaningfulBlocks = page.resolvedParagraphs().filter { block ->
+                    block.en.any { it.isLetter() } || block.bn.any { it.isLetter() }
+                }
+                page.page to meaningfulBlocks
+            }
         }.getOrElse { emptyMap() }
     }
 }
