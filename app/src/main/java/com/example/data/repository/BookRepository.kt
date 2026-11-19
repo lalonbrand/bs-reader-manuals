@@ -71,9 +71,22 @@ class BookRepository(
 
     suspend fun syncRemoteCatalog(catalogUrl: String): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val body = catalogApi.fetchCatalogRaw(catalogUrl)
+            val separator = if ('?' in catalogUrl) "&" else "?"
+            val freshUrl = "$catalogUrl${separator}_ts=${System.currentTimeMillis()}"
+            val body = catalogApi.fetchCatalogRaw(freshUrl)
             val rawJson = body.string()
             val catalog = NetworkModule.parseCatalogJson(rawJson)
+
+            val incomingIds = catalog.books.map { it.id }.toSet()
+            val existingBooks = bookDao.getAllBooks()
+            for (existing in existingBooks) {
+                if (!existing.zipUrl.isNullOrBlank() && existing.id !in incomingIds) {
+                    cancelDownload(existing.id)
+                    existing.localDirPath?.let { path -> File(path).deleteRecursively() }
+                    existing.localCoverPath?.let { path -> File(path).delete() }
+                    bookDao.deleteBookById(existing.id)
+                }
+            }
 
             val entities = catalog.books.map { dto ->
                 val existing = bookDao.getBookById(dto.id)

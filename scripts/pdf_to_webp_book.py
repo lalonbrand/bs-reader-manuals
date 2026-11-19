@@ -674,11 +674,72 @@ def upsert_catalog_entry(catalog_path: Path, entry: dict, catalog_title: str) ->
     catalog_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def prune_catalog_with_incoming_dir(
+    catalog_path: Path,
+    output_dir: Path,
+    incoming_dir: Path,
+    catalog_title: str = "BS Reader Manuals",
+) -> list[str]:
+    """Removes catalog entries and generated .zip/_cover.webp files whose source PDF is gone."""
+    existing_pdfs = {
+        p.name.lower(): p.name
+        for p in incoming_dir.iterdir()
+        if p.is_file() and p.suffix.lower() == ".pdf"
+    } if incoming_dir.exists() else {}
+
+    if catalog_path.exists():
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            data = {"catalogTitle": catalog_title, "books": data}
+    else:
+        data = {"catalogTitle": catalog_title, "books": []}
+
+    kept_books: list[dict] = []
+    removed_ids: list[str] = []
+    kept_ids: set[str] = set()
+
+    for book in data.get("books", []):
+        book_id = str(book.get("id", "")).strip()
+        pdf_name = str(book.get("pdfFileName", "")).strip().lower()
+        if pdf_name and pdf_name in existing_pdfs:
+            kept_books.append(book)
+            if book_id:
+                kept_ids.add(book_id)
+        else:
+            if book_id:
+                removed_ids.append(book_id)
+                for suffix in (".zip", "_cover.webp"):
+                    target = output_dir / f"{book_id}{suffix}"
+                    if target.exists():
+                        target.unlink()
+
+    # Also clean up any orphaned archives/covers in output_dir not present in kept_ids
+    if output_dir.exists():
+        for artifact in output_dir.iterdir():
+            if not artifact.is_file():
+                continue
+            if artifact.name.endswith(".zip"):
+                aid = artifact.name[:-4]
+                if aid not in kept_ids:
+                    artifact.unlink()
+                    if aid not in removed_ids:
+                        removed_ids.append(aid)
+            elif artifact.name.endswith("_cover.webp"):
+                aid = artifact.name[:-11]
+                if aid not in kept_ids:
+                    artifact.unlink()
+
+    data["books"] = kept_books
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return removed_ids
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert a PDF into a high-resolution BS Reader WebP .zip archive with offline Bangla translations."
     )
-    parser.add_argument("pdf", type=Path, help="Path to the source PDF file")
+    parser.add_argument("pdf", nargs="?", type=Path, default=None, help="Path to the source PDF file")
     parser.add_argument("-o", "--output-dir", type=Path, default=Path("./docs"))
     parser.add_argument("--id", dest="book_id", default=None)
     parser.add_argument("--title", default=None)
@@ -695,12 +756,28 @@ def main() -> None:
     parser.add_argument("--lossless", action="store_true")
     parser.add_argument("--skip-cover-page", action="store_true")
     parser.add_argument("--catalog", type=Path, default=None)
+    parser.add_argument("--sync-incoming-dir", type=Path, default=None)
+    parser.add_argument("--prune-only", action="store_true")
     parser.add_argument("--gemini-model", default="gemini-2.5-flash")
     parser.add_argument("--prompt-file", type=Path, default=DEFAULT_PROMPT_PATH)
     parser.add_argument("--correction-prompt-file", type=Path, default=DEFAULT_CORRECTION_PROMPT_PATH)
     parser.add_argument("--no-second-pass", action="store_true")
     parser.add_argument("--api-delay", type=float, default=2.0)
     args = parser.parse_args()
+
+    if args.prune_only:
+        if not args.catalog or not args.sync_incoming_dir:
+            parser.error("--prune-only requires both --catalog and --sync-incoming-dir")
+        removed = prune_catalog_with_incoming_dir(
+            catalog_path=args.catalog,
+            output_dir=args.output_dir,
+            incoming_dir=args.sync_incoming_dir,
+        )
+        print(f"Pruned catalog against {args.sync_incoming_dir}: removed {len(removed)} manual(s) {removed}", flush=True)
+        return
+
+    if args.pdf is None:
+        parser.error("pdf path is required unless --prune-only is set")
 
     title = args.title or args.pdf.stem.replace("_", " ").replace("-", " ").title()
     book_id = args.book_id or slugify(title)
@@ -729,6 +806,12 @@ def main() -> None:
 
     if args.catalog:
         upsert_catalog_entry(args.catalog, entry, catalog_title="BS Reader Manuals")
+        if args.sync_incoming_dir:
+            prune_catalog_with_incoming_dir(
+                catalog_path=args.catalog,
+                output_dir=args.output_dir,
+                incoming_dir=args.sync_incoming_dir,
+            )
 
     print(json.dumps(entry, indent=2))
 

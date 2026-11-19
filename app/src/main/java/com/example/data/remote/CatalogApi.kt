@@ -2,10 +2,12 @@ package com.example.data.remote
 
 import okhttp3.ResponseBody
 import retrofit2.http.GET
+import retrofit2.http.Headers
 import retrofit2.http.Streaming
 import retrofit2.http.Url
 
 interface CatalogApi {
+    @Headers("Cache-Control: no-cache", "Pragma: no-cache")
     @GET
     suspend fun fetchCatalogRaw(@Url catalogUrl: String): ResponseBody
 

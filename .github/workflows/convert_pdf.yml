@@ -95,13 +95,19 @@ jobs:
             "${CMD[@]}"
           else
             SCRIPT_CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'scripts/pdf_to_webp_book.py' 'scripts/translation_prompt.txt' 'scripts/translation_correction_prompt.txt' || true)
+            DELETED_PDFS=()
+            if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+              mapfile -t DELETED_PDFS < <(git diff --name-only --diff-filter=D HEAD~1 HEAD -- 'incoming_pdfs/*.pdf' 'incoming_pdfs/*.PDF')
+            fi
+
+            TARGET_PDFS=()
             if [ "$REBUILD_ALL" = "true" ] || [ -n "$SCRIPT_CHANGED" ] || ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
               TARGET_PDFS=(incoming_pdfs/*.pdf)
             else
               mapfile -t CHANGED < <(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'incoming_pdfs/*.pdf' 'incoming_pdfs/*.PDF')
               if [ ${#CHANGED[@]} -gt 0 ]; then
                 TARGET_PDFS=("${CHANGED[@]}")
-              else
+              elif [ ${#DELETED_PDFS[@]} -eq 0 ]; then
                 TARGET_PDFS=(incoming_pdfs/*.pdf)
               fi
             fi
@@ -114,6 +120,13 @@ jobs:
                 --base-url "$BASE_URL" \
                 --catalog docs/catalog.json
             done
+
+            # Always prune docs/catalog.json and docs/ archives when PDFs are deleted from incoming_pdfs/
+            python -u scripts/pdf_to_webp_book.py \
+              --prune-only \
+              --output-dir docs \
+              --catalog docs/catalog.json \
+              --sync-incoming-dir incoming_pdfs
           fi
 
           {
