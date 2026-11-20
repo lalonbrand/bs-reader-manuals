@@ -471,9 +471,6 @@ fun ReaderScreen(
                         mutableFloatStateOf(uiState.currentPageIndex.toFloat())
                     }
                     val displayPageNum = (sliderPos.roundToInt() + 1).coerceIn(1, totalPages)
-                    val progressPct = ((displayPageNum.toFloat() / totalPages.toFloat()) * 100f)
-                        .roundToInt()
-                        .coerceIn(0, 100)
                     val dockShape = RoundedCornerShape(26.dp)
 
                     Box(
@@ -543,11 +540,6 @@ fun ReaderScreen(
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.SemiBold,
                                             color = PearlWhite
-                                        )
-                                        Text(
-                                            text = "• $progressPct%",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White.copy(alpha = 0.80f)
                                         )
                                     }
                                 }

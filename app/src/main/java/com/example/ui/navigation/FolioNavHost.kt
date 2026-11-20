@@ -21,6 +21,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.ui.bookshelf.BookshelfScreen
 import com.example.ui.bookshelf.BookshelfViewModel
+import com.example.ui.exam.ExamGateScreen
 import com.example.ui.reader.ReaderScreen
 import com.example.ui.reader.ReaderViewModel
 
@@ -47,6 +48,9 @@ fun FolioNavHost() {
                     viewModel = viewModel,
                     onOpenBook = { bookId ->
                         navController.navigate(ReaderRoute(bookId = bookId))
+                    },
+                    onOpenExam = {
+                        navController.navigate(ExamRoute)
                     }
                 )
             }
@@ -59,6 +63,12 @@ fun FolioNavHost() {
                 )
                 ReaderScreen(
                     viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable<ExamRoute> {
+                ExamGateScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

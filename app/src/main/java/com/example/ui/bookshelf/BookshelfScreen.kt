@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.AssignmentTurnedIn
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Notifications
@@ -84,7 +85,8 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun BookshelfScreen(
     viewModel: BookshelfViewModel,
-    onOpenBook: (String) -> Unit
+    onOpenBook: (String) -> Unit,
+    onOpenExam: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -142,6 +144,7 @@ fun BookshelfScreen(
                                 viewModel.syncCatalog(uiState.catalogUrl)
                             }
                         },
+                        onOpenExam = onOpenExam,
                         onCreditsClick = { showCreditsDialog = true }
                     )
 
@@ -384,6 +387,7 @@ private fun BookshelfHeader(
     isSyncing: Boolean,
     onNotificationsClick: () -> Unit,
     onSyncClick: () -> Unit,
+    onOpenExam: () -> Unit,
     onCreditsClick: () -> Unit
 ) {
     Column(
@@ -498,33 +502,62 @@ private fun BookshelfHeader(
             }
         }
 
-        Button(
-            onClick = onSyncClick,
-            enabled = !isSyncing,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("sync_catalog_button")
-                .minimumInteractiveComponentSize(),
-            shape = RoundedCornerShape(50),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            if (isSyncing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
+            Button(
+                onClick = onSyncClick,
+                enabled = !isSyncing,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("sync_catalog_button")
+                    .minimumInteractiveComponentSize(),
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 )
-            } else {
-                Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+            ) {
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (catalogUrl.isBlank()) "Set catalog" else stringResource(R.string.action_fetch_catalog),
+                    maxLines = 1
+                )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (catalogUrl.isBlank()) "Set catalog.json" else stringResource(R.string.action_fetch_catalog),
-                maxLines = 1
-            )
+
+            FilledTonalButton(
+                onClick = onOpenExam,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = SoftCyan.copy(alpha = 0.20f),
+                    contentColor = SoftCyan
+                ),
+                modifier = Modifier
+                    .weight(0.85f)
+                    .testTag("open_exam_center_button")
+                    .minimumInteractiveComponentSize()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AssignmentTurnedIn,
+                    contentDescription = stringResource(R.string.cd_exam_center),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.action_exam_center),
+                    maxLines = 1
+                )
+            }
         }
     }
 }

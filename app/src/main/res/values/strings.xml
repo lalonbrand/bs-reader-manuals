@@ -38,4 +38,11 @@
     <string name="action_bangla_translate">বাংলা</string>
     <string name="cd_bangla_translate">Open Bangla paragraph translation</string>
     <string name="bangla_sheet_title">বাংলা অনুবাদ</string>
+    <string name="action_exam_center">Exam</string>
+    <string name="cd_exam_center">Open Exam Center</string>
+    <string name="exam_title">Exam Center</string>
+    <string name="exam_subtitle">Q&amp;A PDF Scanner • AI Grading • Live Candidate Ranks</string>
+    <string name="exam_upload_pdf">Upload Q&amp;A PDF</string>
+    <string name="exam_start_button">Start Exam</string>
+    <string name="exam_submit_button">Submit Exam</string>
 </resources>

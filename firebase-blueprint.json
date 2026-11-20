@@ -1,0 +1,324 @@
+{
+  "entities": {
+    "ExamPdfBatch": {
+      "title": "ExamPdfBatch",
+      "description": "Metadata record for an uploaded Q&A PDF file whose extracted questions were added to the shared exam bank.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase UID of the user who uploaded the Q&A PDF."
+        },
+        "uploaderName": {
+          "type": "string",
+          "description": "Display name of the uploader."
+        },
+        "title": {
+          "type": "string",
+          "description": "Exam batch title derived from the PDF or customized by uploader."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Original PDF file name."
+        },
+        "pageCount": {
+          "type": "integer",
+          "description": "Number of pages scanned from the PDF."
+        },
+        "questionCount": {
+          "type": "integer",
+          "description": "Total number of questions imported from this PDF."
+        },
+        "mcqCount": {
+          "type": "integer",
+          "description": "Number of MCQ questions in this batch."
+        },
+        "fillCount": {
+          "type": "integer",
+          "description": "Number of fill-in-the-blank questions in this batch."
+        },
+        "descriptiveCount": {
+          "type": "integer",
+          "description": "Number of descriptive written questions in this batch."
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["EXAM_BANK"],
+          "description": "Visibility partition key matching security rule list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when uploaded (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "uploaderName",
+        "title",
+        "fileName",
+        "pageCount",
+        "questionCount",
+        "mcqCount",
+        "fillCount",
+        "descriptiveCount",
+        "visibility",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamQuestion": {
+      "title": "ExamQuestion",
+      "description": "Individual exam question extracted from an uploaded Q&A PDF (MCQ, fill-in-the-blank, or descriptive).",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase UID of the uploader."
+        },
+        "batchId": {
+          "type": "string",
+          "description": "Parent ExamPdfBatch document ID."
+        },
+        "batchTitle": {
+          "type": "string",
+          "description": "Title of the source PDF batch."
+        },
+        "questionType": {
+          "type": "string",
+          "enum": ["MCQ", "FILL_IN_BLANK", "DESCRIPTIVE"],
+          "description": "Question format."
+        },
+        "orderIndex": {
+          "type": "integer",
+          "description": "Sequence index within the source PDF."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Question text shown to exam candidates."
+        },
+        "options": {
+          "type": "array",
+          "description": "Multiple choice option labels for MCQ questions (empty for other types)."
+        },
+        "correctOptionIndex": {
+          "type": "integer",
+          "description": "Zero-based index of the correct MCQ option, or -1 for non-MCQ."
+        },
+        "correctAnswer": {
+          "type": "string",
+          "description": "Reference answer or model description extracted from the Q&A PDF for grading."
+        },
+        "marks": {
+          "type": "integer",
+          "description": "Maximum marks awarded for a fully correct answer."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether this question is included in active exams."
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["EXAM_BANK"],
+          "description": "Visibility partition key matching security rule list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when created (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "batchId",
+        "batchTitle",
+        "questionType",
+        "orderIndex",
+        "prompt",
+        "options",
+        "correctOptionIndex",
+        "correctAnswer",
+        "marks",
+        "active",
+        "visibility",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamSubmission": {
+      "title": "ExamSubmission",
+      "description": "Candidate exam submission summary used to compute total candidates and live rankings.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase UID of the candidate."
+        },
+        "candidateName": {
+          "type": "string",
+          "description": "Candidate full name entered at exam start."
+        },
+        "phase": {
+          "type": "string",
+          "description": "Candidate program or phase (e.g., AQC - 10th Phase)."
+        },
+        "factoryName": {
+          "type": "string",
+          "description": "Candidate factory or organization name."
+        },
+        "obtainedMarks": {
+          "type": "number",
+          "description": "Total marks awarded across MCQ, fill-in-the-blank, and AI-graded descriptive answers."
+        },
+        "totalMarks": {
+          "type": "integer",
+          "description": "Maximum possible marks for the attempted exam."
+        },
+        "percentage": {
+          "type": "number",
+          "description": "Obtained percentage score (0-100)."
+        },
+        "questionCount": {
+          "type": "integer",
+          "description": "Total number of questions in this exam attempt."
+        },
+        "mcqCorrect": {
+          "type": "integer",
+          "description": "Count of correctly answered MCQ questions."
+        },
+        "mcqTotal": {
+          "type": "integer",
+          "description": "Total MCQ questions attempted."
+        },
+        "fillMarks": {
+          "type": "number",
+          "description": "Marks earned on fill-in-the-blank questions."
+        },
+        "fillTotalMarks": {
+          "type": "integer",
+          "description": "Maximum marks for fill-in-the-blank questions."
+        },
+        "descMarks": {
+          "type": "number",
+          "description": "AI-graded marks earned on descriptive written answers."
+        },
+        "descTotalMarks": {
+          "type": "integer",
+          "description": "Maximum marks for descriptive questions."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["SUBMITTED"],
+          "description": "Terminal submission status."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server submission timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "candidateName",
+        "phase",
+        "factoryName",
+        "obtainedMarks",
+        "totalMarks",
+        "percentage",
+        "questionCount",
+        "mcqCorrect",
+        "mcqTotal",
+        "fillMarks",
+        "fillTotalMarks",
+        "descMarks",
+        "descTotalMarks",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamReview": {
+      "title": "ExamReview",
+      "description": "Owner-only detailed per-question answer review and AI grading feedback for an exam submission.",
+      "type": "object",
+      "properties": {
+        "submissionId": {
+          "type": "string",
+          "description": "Matching ExamSubmission document ID."
+        },
+        "candidateName": {
+          "type": "string",
+          "description": "Candidate name."
+        },
+        "phase": {
+          "type": "string",
+          "description": "Candidate phase."
+        },
+        "factoryName": {
+          "type": "string",
+          "description": "Candidate factory name."
+        },
+        "obtainedMarks": {
+          "type": "number",
+          "description": "Total marks obtained."
+        },
+        "totalMarks": {
+          "type": "integer",
+          "description": "Maximum marks."
+        },
+        "items": {
+          "type": "array",
+          "description": "List of graded question review maps."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server submission timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "submissionId",
+        "candidateName",
+        "phase",
+        "factoryName",
+        "obtainedMarks",
+        "totalMarks",
+        "items",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/examPdfBatches/{batchId}": {
+      "schema": { "$ref": "#/entities/ExamPdfBatch" },
+      "description": "Uploaded Q&A PDF batches forming the exam question bank."
+    },
+    "/examQuestions/{questionId}": {
+      "schema": { "$ref": "#/entities/ExamQuestion" },
+      "description": "Exam questions parsed from uploaded Q&A PDFs."
+    },
+    "/examSubmissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/ExamSubmission" },
+      "description": "Candidate exam scores and metadata for live rank calculation across total candidates."
+    },
+    "/users/{userId}/examReviews/{submissionId}": {
+      "schema": { "$ref": "#/entities/ExamReview" },
+      "description": "Private per-question answer breakdown and AI feedback scoped to the submitting user."
+    }
+  }
+}
