@@ -766,10 +766,12 @@ fun ReaderScreen(
 
     if (showBanglaSheet) {
         val oneBasedPage = uiState.currentPageIndex + 1
+        val translatedPagesCount = uiState.translationsByPage.count { (_, items) -> items.isNotEmpty() }
         BilingualTranslationBottomSheet(
             currentPageIndex = uiState.currentPageIndex,
             totalPages = uiState.pageFiles.size,
-            hasBookTranslations = uiState.translationsByPage.values.any { it.isNotEmpty() },
+            translatedPagesCount = translatedPagesCount,
+            hasBookTranslations = translatedPagesCount > 0,
             pageLines = uiState.translationsByPage[oneBasedPage].orEmpty(),
             onSelectPage = viewModel::goToPage,
             onDismiss = { showBanglaSheet = false }

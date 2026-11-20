@@ -129,23 +129,35 @@ jobs:
               --sync-incoming-dir incoming_pdfs
           fi
 
-          {
-            echo '### BS Reader Manual Conversion & Bangla Translation Summary'
-            echo ''
-            echo '| Archive | Bangla Translation (`translations_bn.json`) |'
-            echo '|---|---|'
-            for z in docs/*.zip; do
-              [ -f "$z" ] || continue
-              zname=$(basename "$z")
-              if unzip -l "$z" | grep -q "translations_bn.json"; then
-                echo "Verified translations_bn.json inside $z" >&2
-                printf '| `%s` | Included |\n' "$zname"
-              else
-                echo "::warning::translations_bn.json NOT found inside $z" >&2
-                printf '| `%s` | Not included |\n' "$zname"
-              fi
-            done
-          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          python - <<'PY' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          import glob, json, os, re, sys, zipfile
+
+          print("### BS Reader Manual Conversion & Bangla Translation Summary\n")
+          print("| Archive | Translated Pages | Paragraphs | Status |")
+          print("|---|---|---|---|")
+          for zpath in sorted(glob.glob("docs/*.zip")):
+              zname = os.path.basename(zpath)
+              with zipfile.ZipFile(zpath) as zf:
+                  names = zf.namelist()
+                  page_files = [n for n in names if re.match(r"^page_\d+\.webp$", n)]
+                  total_pages = len(page_files)
+                  if "translations_bn.json" in names:
+                      bundle = json.loads(zf.read("translations_bn.json").decode("utf-8"))
+                      pages = bundle.get("pages", [])
+                      translated_pages = 0
+                      total_paras = 0
+                      for p in pages:
+                          items = p.get("paragraphs") or p.get("lines") or []
+                          non_empty = [it for it in items if str(it.get("bn", "")).strip()]
+                          if non_empty:
+                              translated_pages += 1
+                              total_paras += len(non_empty)
+                      print(f"Verified {zname}: {translated_pages}/{total_pages} pages, {total_paras} paragraphs", file=sys.stderr)
+                      print(f"| `{zname}` | {translated_pages} / {total_pages} | {total_paras} | Included |")
+                  else:
+                      print(f"::warning::translations_bn.json NOT found inside {zpath}", file=sys.stderr)
+                      print(f"| `{zname}` | 0 / {total_pages} | 0 | Not included |")
+          PY
 
           rm -rf tmp_pdfs
 

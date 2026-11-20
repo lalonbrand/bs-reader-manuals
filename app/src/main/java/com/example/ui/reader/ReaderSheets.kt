@@ -337,6 +337,7 @@ fun ReaderAppearanceBottomSheet(
 fun BilingualTranslationBottomSheet(
     currentPageIndex: Int,
     totalPages: Int,
+    translatedPagesCount: Int,
     hasBookTranslations: Boolean,
     pageLines: List<TranslatedLine>,
     onSelectPage: (Int) -> Unit,
@@ -410,6 +411,12 @@ fun BilingualTranslationBottomSheet(
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = SoftCyan
+                    )
+                    Text(
+                        text = "$translatedPagesCount / $totalPages pages translated offline",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("translated_pages_count_label")
                     )
                 }
 
