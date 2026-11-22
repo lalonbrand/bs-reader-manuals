@@ -69,7 +69,9 @@ jobs:
           set -e
           shopt -s nullglob nocaseglob
           BASE_URL="https://${REPO_OWNER}.github.io/${REPO_NAME}"
+          STATUS_FILE="/tmp/translation_status.json"
           mkdir -p docs tmp_pdfs
+          rm -f "$STATUS_FILE"
 
           if [ -z "${GEMINI_API_KEY:-}" ]; then
             echo "::warning::GEMINI_API_KEY secret is not set — Bangla translations_bn.json will NOT be generated."
@@ -88,7 +90,8 @@ jobs:
             CMD=(python -u scripts/pdf_to_webp_book.py "$PDF_PATH" \
               --output-dir docs \
               --base-url "$BASE_URL" \
-              --catalog docs/catalog.json)
+              --catalog docs/catalog.json \
+              --status-file "$STATUS_FILE")
 
             [ -n "$INPUT_TITLE" ] && CMD+=(--title "$INPUT_TITLE")
             [ -n "$INPUT_AUTHOR" ] && CMD+=(--author "$INPUT_AUTHOR")
@@ -118,7 +121,8 @@ jobs:
               python -u scripts/pdf_to_webp_book.py "$pdf" \
                 --output-dir docs \
                 --base-url "$BASE_URL" \
-                --catalog docs/catalog.json
+                --catalog docs/catalog.json \
+                --status-file "$STATUS_FILE"
             done
 
             # Always prune docs/catalog.json and docs/ archives when PDFs are deleted from incoming_pdfs/
@@ -132,11 +136,22 @@ jobs:
           python - <<'PY' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           import glob, json, os, re, sys, zipfile
 
+          status_map = {}
+          status_path = "/tmp/translation_status.json"
+          if os.path.exists(status_path):
+              try:
+                  with open(status_path, encoding="utf-8") as fh:
+                      status_map = json.load(fh)
+              except Exception:
+                  status_map = {}
+
           print("### BS Reader Manual Conversion & Bangla Translation Summary\n")
-          print("| Archive | Translated Pages | Paragraphs | Status |")
-          print("|---|---|---|---|")
+          print("| Archive | Translated Pages | Paragraphs | Status | Details |")
+          print("|---|---|---|---|---|")
           for zpath in sorted(glob.glob("docs/*.zip")):
               zname = os.path.basename(zpath)
+              diag = status_map.get(zname, {}) if isinstance(status_map, dict) else {}
+              detail = str(diag.get("detail") or "").replace("|", "/").replace("\n", " ").strip()
               with zipfile.ZipFile(zpath) as zf:
                   names = zf.namelist()
                   page_files = [n for n in names if re.match(r"^page_\d+\.webp$", n)]
@@ -152,11 +167,13 @@ jobs:
                           if non_empty:
                               translated_pages += 1
                               total_paras += len(non_empty)
-                      print(f"Verified {zname}: {translated_pages}/{total_pages} pages, {total_paras} paragraphs", file=sys.stderr)
-                      print(f"| `{zname}` | {translated_pages} / {total_pages} | {total_paras} | Included |")
+                      summary_detail = detail or f"Model: {bundle.get('translator', 'gemini')}"
+                      print(f"Verified {zname}: {translated_pages}/{total_pages} pages, {total_paras} paragraphs ({summary_detail})", file=sys.stderr)
+                      print(f"| `{zname}` | {translated_pages} / {total_pages} | {total_paras} | Included | {summary_detail} |")
                   else:
-                      print(f"::warning::translations_bn.json NOT found inside {zpath}", file=sys.stderr)
-                      print(f"| `{zname}` | 0 / {total_pages} | 0 | Not included |")
+                      reason = detail or "Not rebuilt in this run or GEMINI_API_KEY skipped."
+                      print(f"::warning::translations_bn.json NOT found inside {zpath}: {reason}", file=sys.stderr)
+                      print(f"| `{zname}` | 0 / {total_pages} | 0 | Not included | {reason} |")
           PY
 
           rm -rf tmp_pdfs

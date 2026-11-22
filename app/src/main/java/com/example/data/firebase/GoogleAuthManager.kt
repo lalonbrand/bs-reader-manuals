@@ -9,7 +9,6 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -25,10 +24,22 @@ sealed interface GoogleSignInOutcome {
 
 object GoogleAuthManager {
     private const val TAG = "GoogleAuthManager"
+    private const val DEFAULT_WEB_CLIENT_ID_RES = "default_web_client_id"
+
+    private fun resolveDefaultWebClientId(context: Context): String? {
+        val resId = context.resources.getIdentifier(
+            DEFAULT_WEB_CLIENT_ID_RES,
+            "string",
+            context.packageName
+        )
+        if (resId == 0) return null
+        return context.getString(resId).trim().takeIf { it.isNotEmpty() }
+    }
 
     suspend fun attemptSilentSignIn(activityContext: Context): GoogleSignInOutcome {
         return try {
-            val serverClientId = activityContext.getString(R.string.default_web_client_id)
+            val serverClientId = resolveDefaultWebClientId(activityContext)
+                ?: return GoogleSignInOutcome.NoSavedCredential
             val option = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(true)
                 .setServerClientId(serverClientId)
@@ -42,7 +53,10 @@ object GoogleAuthManager {
     }
 
     suspend fun signInInteractive(activityContext: Context): GoogleSignInOutcome {
-        val serverClientId = activityContext.getString(R.string.default_web_client_id)
+        val serverClientId = resolveDefaultWebClientId(activityContext)
+            ?: return GoogleSignInOutcome.Error(
+                "Google Sign-In configuration missing. Please ensure google-services.json is bundled."
+            )
         val option = GetSignInWithGoogleOption.Builder(serverClientId).build()
         val request = GetCredentialRequest.Builder()
             .addCredentialOption(option)

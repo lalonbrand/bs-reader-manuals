@@ -245,6 +245,134 @@ class GeminiRateLimiter:
         self._timestamps.append(now)
 
 
+PREFERRED_GEMINI_MODELS = (
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-3-flash-preview",
+)
+
+
+def _strip_json_fences(raw_text: str) -> str:
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+
+
+def _extract_candidate_text(parsed: dict) -> str:
+    candidates = parsed.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(f"Empty Gemini candidates: {json.dumps(parsed)[:300]}")
+    content_obj = candidates[0].get("content") or {}
+    parts = content_obj.get("parts") or []
+    # Thinking models (e.g., gemini-2.5-flash) may emit thought parts before the JSON text part.
+    non_thought_texts = [
+        str(p.get("text", ""))
+        for p in parts
+        if isinstance(p, dict) and not p.get("thought") and str(p.get("text", "")).strip()
+    ]
+    if non_thought_texts:
+        return "\n".join(non_thought_texts).strip()
+    any_texts = [
+        str(p.get("text", ""))
+        for p in parts
+        if isinstance(p, dict) and str(p.get("text", "")).strip()
+    ]
+    if any_texts:
+        return "\n".join(any_texts).strip()
+    finish_reason = candidates[0].get("finishReason", "UNKNOWN")
+    raise RuntimeError(f"No text part in Gemini candidate (finishReason={finish_reason}).")
+
+
+def _discover_available_flash_models(api_key: str) -> list[str]:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    models: list[str] = []
+    for entry in payload.get("models", []):
+        methods = entry.get("supportedGenerationMethods") or []
+        if "generateContent" not in methods:
+            continue
+        name = str(entry.get("name", "")).removeprefix("models/").strip()
+        if name and "flash" in name.lower():
+            models.append(name)
+    return models
+
+
+def preflight_gemini_api(
+    api_key: str,
+    requested_model: str,
+    rate_limiter: GeminiRateLimiter,
+) -> tuple[str | None, str]:
+    """Verifies API key & resolves a working Flash model before looping over all PDF pages."""
+    candidates: list[str] = [requested_model]
+    try:
+        available = _discover_available_flash_models(api_key)
+        if available:
+            print(f"Discovered Flash models on key: {available[:8]}", flush=True)
+            if requested_model not in available:
+                candidates = []
+            for preferred in PREFERRED_GEMINI_MODELS:
+                if preferred in available and preferred not in candidates:
+                    candidates.append(preferred)
+            for name in available:
+                if name not in candidates and "tts" not in name.lower() and "image" not in name.lower():
+                    candidates.append(name)
+    except urllib.error.HTTPError as err:
+        err_body = err.read().decode("utf-8", errors="ignore")
+        if err.code in (400, 401, 403):
+            return None, f"Gemini API key rejected (HTTP {err.code}): {err_body[:240]}"
+        print(f"Warning: ListModels check returned HTTP {err.code}; proceeding with {requested_model}.", flush=True)
+    except Exception as exc:
+        print(f"Warning: ListModels check failed ({exc}); proceeding with {requested_model}.", flush=True)
+
+    probe_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "items": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "index": {"type": "INTEGER"},
+                        "bn": {"type": "STRING"},
+                    },
+                    "required": ["index", "bn"],
+                },
+            }
+        },
+        "required": ["items"],
+    }
+
+    last_error = "No compatible Gemini Flash model responded."
+    for candidate_model in candidates[:4]:
+        try:
+            probe_res = call_gemini_json(
+                api_key=api_key,
+                model=candidate_model,
+                system_instruction="Translate English to Bangla and return JSON: {\"items\": [{\"index\": 0, \"bn\": \"...\"}]}",
+                user_parts=[{"text": json.dumps({"items": [{"index": 0, "en": "Quality Manual"}]})}],
+                response_schema=probe_schema,
+                max_retries=1,
+                rate_limiter=rate_limiter,
+            )
+            items = extract_items_list(probe_res)
+            if items and has_bangla_script(str(items[0].get("bn", ""))):
+                return candidate_model, f"Verified working model: {candidate_model}"
+            last_error = f"Model {candidate_model} probe returned unexpected payload: {str(probe_res)[:160]}"
+        except Exception as exc:
+            last_error = str(exc)
+            print(f"Pre-flight check failed for {candidate_model}: {last_error}", flush=True)
+            # Invalid API key fails for all models; stop immediately
+            if "API_KEY_INVALID" in last_error or "HTTP 401" in last_error or "HTTP 403" in last_error:
+                break
+
+    return None, last_error
+
+
 def call_gemini_json(
     api_key: str,
     model: str,
@@ -260,11 +388,13 @@ def call_gemini_json(
         f"{model}:generateContent?key={api_key}"
     )
 
-    def build_body(include_schema: bool) -> bytes:
+    def build_body(include_schema: bool, include_thinking_cfg: bool) -> bytes:
         gen_cfg: dict = {
             "temperature": 0.2,
             "responseMimeType": "application/json",
         }
+        if include_thinking_cfg:
+            gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
         if include_schema and response_schema is not None:
             gen_cfg["responseSchema"] = response_schema
         payload = {
@@ -275,7 +405,8 @@ def call_gemini_json(
         return json.dumps(payload).encode("utf-8")
 
     use_schema = response_schema is not None
-    data = build_body(use_schema)
+    use_thinking_cfg = "2.5" in model
+    data = build_body(use_schema, use_thinking_cfg)
 
     for attempt in range(max_retries + 1):
         if rate_limiter is not None:
@@ -290,17 +421,19 @@ def call_gemini_json(
             with urllib.request.urlopen(req, timeout=120) as resp:
                 raw = resp.read().decode("utf-8")
                 parsed = json.loads(raw)
-                candidates = parsed.get("candidates") or []
-                if not candidates:
-                    raise RuntimeError(f"Empty Gemini candidates: {raw[:300]}")
-                text_out = candidates[0]["content"]["parts"][0]["text"]
+                text_out = _strip_json_fences(_extract_candidate_text(parsed))
                 return json.loads(text_out)
         except urllib.error.HTTPError as err:
             err_body = err.read().decode("utf-8", errors="ignore")
-            if err.code == 400 and use_schema:
+            if err.code == 400 and use_thinking_cfg and "thinking" in err_body.lower():
+                print("Gemini HTTP 400 on thinkingConfig; retrying without thinkingConfig...", flush=True)
+                use_thinking_cfg = False
+                data = build_body(use_schema, False)
+                continue
+            if err.code == 400 and use_schema and "API_KEY_INVALID" not in err_body:
                 print("Gemini HTTP 400 with responseSchema; retrying without schema...", flush=True)
                 use_schema = False
-                data = build_body(False)
+                data = build_body(False, use_thinking_cfg)
                 continue
             if err.code in (429, 500, 502, 503, 504) and attempt < max_retries:
                 retry_after = err.headers.get("Retry-After") if err.headers else None
@@ -315,7 +448,7 @@ def call_gemini_json(
                 time.sleep(wait_sec)
                 continue
             raise RuntimeError(f"Gemini API error HTTP {err.code}: {err_body[:400]}") from err
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as err:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, RuntimeError) as err:
             if attempt < max_retries:
                 wait_sec = base_delay_sec * (2 ** attempt)
                 print(f"Gemini transient error ({err}); retrying in {wait_sec:.1f}s...", flush=True)
@@ -563,12 +696,25 @@ def build_bangla_translations_bundle(
     correction_prompt_path: Path | None,
     enable_second_pass: bool = True,
     requests_per_minute: float = 10.0,
+    diagnostics_out: dict | None = None,
 ) -> dict | None:
+    def record_diag(status: str, detail: str, active_model: str = model) -> None:
+        if diagnostics_out is not None:
+            diagnostics_out.update({
+                "status": status,
+                "detail": detail,
+                "model": active_model,
+            })
+
     if not api_key.strip():
-        print("GEMINI_API_KEY not set — skipping Bangla translation generation.", flush=True)
+        msg = "GEMINI_API_KEY secret is not configured in GitHub repository secrets."
+        print(f"::warning::{msg} Skipping Bangla translation generation.", flush=True)
+        record_diag("SKIPPED_NO_KEY", msg)
         return None
     if not prompt_path.exists():
-        print(f"Translation prompt not found at {prompt_path} — skipping.", flush=True)
+        msg = f"Translation prompt not found at {prompt_path}."
+        print(f"::warning::{msg} Skipping.", flush=True)
+        record_diag("SKIPPED_NO_PROMPT", msg)
         return None
 
     rate_limiter = GeminiRateLimiter(rpm=requests_per_minute)
@@ -578,6 +724,14 @@ def build_bangla_translations_bundle(
         flush=True,
     )
 
+    active_model, preflight_msg = preflight_gemini_api(api_key.strip(), model, rate_limiter)
+    if not active_model:
+        print(f"::error::Gemini pre-flight failed — {preflight_msg}", flush=True)
+        record_diag("API_ERROR", preflight_msg)
+        return None
+    print(f"Gemini pre-flight OK: {preflight_msg}", flush=True)
+    model = active_model
+
     translation_prompt = prompt_path.read_text(encoding="utf-8")
     correction_prompt = None
     if enable_second_pass and correction_prompt_path and correction_prompt_path.exists():
@@ -585,6 +739,8 @@ def build_bangla_translations_bundle(
 
     pdf_pages = [pdf_p for _, pdf_p, _ in reader_pages_info]
     extracted_by_pdf_page = extract_page_paragraphs(pdf_path, pdf_pages)
+    if fitz is None:
+        print("Warning: PyMuPDF unavailable; falling back to Gemini Vision OCR for all pages.", flush=True)
 
     para_cache: dict[str, str] = {}
     pages_payload: list[dict] = []
@@ -593,6 +749,7 @@ def build_bangla_translations_bundle(
     total_translated_paragraphs = 0
     actual_bangla_paragraphs_count = 0
     failed_pages_count = 0
+    last_error_detail = ""
 
     for reader_page_num, pdf_page_num, page_img_path in reader_pages_info:
         pct = round((reader_page_num / float(max(1, total_pages))) * 100)
@@ -634,6 +791,7 @@ def build_bangla_translations_bundle(
                 pages_payload.append({"page": reader_page_num, "paragraphs": vision_paragraphs})
             except Exception as exc:
                 failed_pages_count += 1
+                last_error_detail = str(exc)
                 print(
                     f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Warning: vision translation failed ({exc})",
                     flush=True,
@@ -675,6 +833,7 @@ def build_bangla_translations_bundle(
                 )
             except Exception as exc:
                 failed_pages_count += 1
+                last_error_detail = str(exc)
                 print(
                     f"[Bangla {reader_page_num}/{total_pages} | {pct}%] Warning: translation failed ({exc})",
                     flush=True,
@@ -707,13 +866,16 @@ def build_bangla_translations_bundle(
     )
 
     if total_translated_paragraphs == 0 or actual_bangla_paragraphs_count == 0:
+        reason = last_error_detail or "Model returned empty or non-Bangla output."
         print(
-            f"::warning::Zero real Bangla translations generated for '{pdf_path.name}'; "
+            f"::warning::Zero real Bangla translations generated for '{pdf_path.name}' ({reason}); "
             "omitting empty translations_bn.json.",
             flush=True,
         )
+        record_diag("ZERO_OUTPUT", reason, model)
         return None
 
+    record_diag("OK", f"Translated {translated_pages_count}/{total_pages} pages using {model}", model)
     return {
         "version": 1,
         "language": "bn",
@@ -745,6 +907,7 @@ def render_pdf_to_webp_zip(
     correction_prompt_path: Path = DEFAULT_CORRECTION_PROMPT_PATH,
     enable_second_pass: bool = True,
     requests_per_minute: float = 10.0,
+    status_file: Path | None = None,
 ) -> dict:
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -806,6 +969,7 @@ def render_pdf_to_webp_zip(
             reader_pages_info.append((rendered_page_count, pdf_page, page_tmp))
 
         # 3. Extract text lines (or use Gemini Vision on image/outlined pages) & translate to Bangla
+        diag_info: dict = {}
         translations_bundle = build_bangla_translations_bundle(
             pdf_path=pdf_path,
             reader_pages_info=reader_pages_info,
@@ -815,7 +979,19 @@ def render_pdf_to_webp_zip(
             correction_prompt_path=correction_prompt_path,
             enable_second_pass=enable_second_pass,
             requests_per_minute=requests_per_minute,
+            diagnostics_out=diag_info,
         )
+        if status_file is not None:
+            existing_status = {}
+            if status_file.exists():
+                try:
+                    existing_status = json.loads(status_file.read_text(encoding="utf-8"))
+                except Exception:
+                    existing_status = {}
+            existing_status[zip_filename] = diag_info
+            status_file.parent.mkdir(parents=True, exist_ok=True)
+            status_file.write_text(json.dumps(existing_status, indent=2), encoding="utf-8")
+
         if translations_bundle is not None:
             trans_tmp = tmp_path / "translations_bn.json"
             trans_tmp.write_text(
@@ -950,6 +1126,7 @@ def main() -> None:
     parser.add_argument("--no-second-pass", action="store_true")
     parser.add_argument("--rpm", type=float, default=10.0, help="Max Gemini API requests per minute (default: 10)")
     parser.add_argument("--api-delay", type=float, default=None, help="Optional legacy delay in seconds (overrides --rpm if > 0)")
+    parser.add_argument("--status-file", type=Path, default=None, help="Optional JSON file for translation diagnostic status")
     args = parser.parse_args()
 
     if args.prune_only:
@@ -992,6 +1169,7 @@ def main() -> None:
         correction_prompt_path=args.correction_prompt_file,
         enable_second_pass=not args.no_second_pass,
         requests_per_minute=effective_rpm,
+        status_file=args.status_file,
     )
 
     if args.catalog:
