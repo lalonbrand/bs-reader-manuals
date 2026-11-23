@@ -7,6 +7,8 @@ on:
       - "app/**"
       - "build.gradle.kts"
       - "settings.gradle.kts"
+      - "gradle.properties"
+      - "debug.keystore.base64"
       - "gradle/**"
       - ".github/workflows/build_apk.yml"
 
@@ -47,10 +49,10 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses
           set -o pipefail
           "$SDKMANAGER" --sdk_root="$SDK_DIR" --install \
-            "platforms;android-36.1" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "platform-tools"
+          "$SDKMANAGER" --sdk_root="$SDK_DIR" --install "platforms;android-36.1" || true
           ls -la "$SDK_DIR/platforms" "$SDK_DIR/build-tools" "$SDK_DIR/licenses"
 
       - name: Set up Gradle 9.3.1
@@ -77,16 +79,21 @@ jobs:
           ls -lh debug.keystore
           test -s debug.keystore
 
-      - name: Verify Firebase google-services.json
+      - name: Restore or verify Firebase google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           set -euo pipefail
-          if [ ! -f app/google-services.json ]; then
-            echo "::error::app/google-services.json is missing from this repository. Commit app/google-services.json before building BS-Reader.apk so Firebase AI Translation and Exam Center work."
-            exit 1
+          if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "Restored app/google-services.json from GitHub Secrets."
           fi
-          if grep -q "remixed-project-id" app/google-services.json; then
-            echo "::error::app/google-services.json still contains placeholder 'remixed-project-id'."
-            exit 1
+          if [ ! -f app/google-services.json ]; then
+            echo "::warning::app/google-services.json is missing in GitHub. Push app/google-services.json or add GOOGLE_SERVICES_JSON secret so Firebase AI Translation and Exam Center initialize."
+          elif grep -q "remixed-project-id" app/google-services.json; then
+            echo "::warning::app/google-services.json contains placeholder 'remixed-project-id'."
+          else
+            echo "Verified app/google-services.json is present."
           fi
 
       - name: Build BS Reader Debug APK
@@ -96,6 +103,8 @@ jobs:
         run: |
           set -euo pipefail
           cp app/build/outputs/apk/debug/app-debug.apk BS-Reader.apk
+          VERSION_NAME=$(grep -E 'versionName\s*=' app/build.gradle.kts | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "VERSION_NAME=${VERSION_NAME:-latest}" >> "$GITHUB_ENV"
           ls -lh BS-Reader.apk
 
       - name: Upload APK as Workflow Artifact
@@ -105,10 +114,21 @@ jobs:
           path: BS-Reader.apk
 
       - name: Publish BS-Reader.apk to Latest Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: BS Reader APK (Latest)
-          body: "Latest compiled Android APK for BS Reader (Bestseller Manuals)."
-          files: BS-Reader.apk
-          make_latest: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f latest HEAD
+          git push -f origin latest
+
+          RELEASE_TITLE="BS Reader v${VERSION_NAME} (Latest)"
+          RELEASE_BODY="Latest compiled Android APK for BS Reader v${VERSION_NAME} (Bestseller Manuals). Built from commit ${GITHUB_SHA::7}."
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest BS-Reader.apk --clobber
+            gh release edit latest --title "$RELEASE_TITLE" --notes "$RELEASE_BODY" --latest
+          else
+            gh release create latest BS-Reader.apk --title "$RELEASE_TITLE" --notes "$RELEASE_BODY" --latest
+          fi
