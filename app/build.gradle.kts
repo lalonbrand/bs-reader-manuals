@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.foliocurl.rkzmvp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 20010
+    versionName = "2.0.10"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
