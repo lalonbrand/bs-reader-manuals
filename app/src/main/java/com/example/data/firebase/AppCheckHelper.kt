@@ -15,26 +15,50 @@ private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
 
+@Volatile
+private var lastFirebaseInitError: String? = null
+
 fun ensureFirebaseInitialized(context: Context): Boolean {
     val appContext = context.applicationContext ?: context
     return try {
         if (FirebaseApp.getApps(appContext).isNotEmpty()) {
+            lastFirebaseInitError = null
             true
         } else {
             val initialized = FirebaseApp.initializeApp(appContext)
             if (initialized == null) {
-                Log.e(
-                    TAG,
-                    "FirebaseApp.initializeApp returned null. Verify app/google-services.json was compiled into resources."
+                val appIdRes = appContext.resources.getIdentifier(
+                    "google_app_id",
+                    "string",
+                    appContext.packageName
                 )
+                lastFirebaseInitError = if (appIdRes == 0) {
+                    "This APK was built without app/google-services.json (missing google_app_id). Download the APK directly from AI Studio, or add GOOGLE_SERVICES_JSON in GitHub Repository Secrets and re-run Build BS Reader APK."
+                } else {
+                    "FirebaseApp.initializeApp returned null despite google_app_id resource existing."
+                }
+                Log.e(TAG, lastFirebaseInitError!!)
                 false
             } else {
+                lastFirebaseInitError = null
                 true
             }
         }
     } catch (e: Exception) {
+        lastFirebaseInitError = e.localizedMessage ?: "Failed to initialize FirebaseApp."
         Log.e(TAG, "Failed to initialize FirebaseApp", e)
         false
+    }
+}
+
+fun getFirebaseInitDiagnosticMessage(context: Context): String {
+    val appContext = context.applicationContext ?: context
+    lastFirebaseInitError?.let { return it }
+    val appIdRes = appContext.resources.getIdentifier("google_app_id", "string", appContext.packageName)
+    return if (appIdRes == 0) {
+        "This APK was built without app/google-services.json (missing google_app_id). Download the APK directly from AI Studio, or add GOOGLE_SERVICES_JSON in GitHub Repository Secrets and re-run Build BS Reader APK."
+    } else {
+        "Firebase is not initialized in this APK build."
     }
 }
 

@@ -23,6 +23,7 @@ import com.example.data.exam.QuestionType
 import com.example.data.exam.RankedSubmission
 import com.example.data.exam.computeCandidateRankings
 import com.example.data.firebase.ensureFirebaseInitialized
+import com.example.data.firebase.getFirebaseInitDiagnosticMessage
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
@@ -231,9 +232,7 @@ class ExamViewModel(
             }
             try {
                 if (!ensureFirebaseInitialized(appContext)) {
-                    throw IllegalStateException(
-                        "Firebase is not initialized in this APK build. Rebuild or download the latest APK with google-services.json included."
-                    )
+                    throw IllegalStateException(getFirebaseInitDiagnosticMessage(appContext))
                 }
                 val parsed = aiService.parseQaPdfUri(appContext.applicationContext, uri) { progress ->
                     _interactionState.update { it.copy(scanProgressText = progress) }
@@ -629,9 +628,7 @@ class ExamViewModel(
             val initialized = ensureFirebaseInitialized(application)
             val dbResult = if (!initialized) {
                 Result.failure(
-                    IllegalStateException(
-                        "Firebase is not initialized in this APK build. Rebuild or download the latest APK with google-services.json included."
-                    )
+                    IllegalStateException(getFirebaseInitDiagnosticMessage(application))
                 )
             } else {
                 runCatching {

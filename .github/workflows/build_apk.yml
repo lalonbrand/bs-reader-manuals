@@ -89,11 +89,18 @@ jobs:
             echo "Restored app/google-services.json from GitHub Secrets."
           fi
           if [ ! -f app/google-services.json ]; then
+            echo "HAS_GOOGLE_SERVICES=false" >> "$GITHUB_ENV"
             echo "::warning::app/google-services.json is missing in GitHub. Push app/google-services.json or add GOOGLE_SERVICES_JSON secret so Firebase AI Translation and Exam Center initialize."
+            echo "### Firebase Config: MISSING" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add \`GOOGLE_SERVICES_JSON\` in GitHub Repository Secrets (or push \`app/google-services.json\`) and re-run this workflow." >> "$GITHUB_STEP_SUMMARY"
           elif grep -q "remixed-project-id" app/google-services.json; then
+            echo "HAS_GOOGLE_SERVICES=false" >> "$GITHUB_ENV"
             echo "::warning::app/google-services.json contains placeholder 'remixed-project-id'."
+            echo "### Firebase Config: PLACEHOLDER" >> "$GITHUB_STEP_SUMMARY"
           else
+            echo "HAS_GOOGLE_SERVICES=true" >> "$GITHUB_ENV"
             echo "Verified app/google-services.json is present."
+            echo "### Firebase Config: OK" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Build BS Reader Debug APK
@@ -124,7 +131,12 @@ jobs:
           git push -f origin latest
 
           RELEASE_TITLE="BS Reader v${VERSION_NAME} (Latest)"
-          RELEASE_BODY="Latest compiled Android APK for BS Reader v${VERSION_NAME} (Bestseller Manuals). Built from commit ${GITHUB_SHA::7}."
+          if [ "${HAS_GOOGLE_SERVICES:-false}" = "true" ]; then
+            FIREBASE_STATUS="Firebase config (google-services.json): INCLUDED"
+          else
+            FIREBASE_STATUS="Firebase config (google-services.json): MISSING — add GOOGLE_SERVICES_JSON secret in GitHub Settings -> Secrets and variables -> Actions and re-run Build BS Reader APK."
+          fi
+          RELEASE_BODY="Latest compiled Android APK for BS Reader v${VERSION_NAME} (Bestseller Manuals). Built from commit ${GITHUB_SHA::7}."$'\n\n'"${FIREBASE_STATUS}"
 
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest BS-Reader.apk --clobber
