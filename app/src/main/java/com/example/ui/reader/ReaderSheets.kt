@@ -32,8 +32,11 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -77,6 +80,7 @@ import com.example.data.local.BookEntity
 import com.example.data.local.ReaderSurfaceTone
 import com.example.data.local.TranslatedLine
 import com.example.ui.bookshelf.formatBytes
+import com.example.ui.theme.ErrorCoral
 import com.example.ui.theme.NotoBengaliFont
 import com.example.ui.theme.SoftCyan
 import com.example.ui.theme.glassPanel
@@ -338,8 +342,13 @@ fun BilingualTranslationBottomSheet(
     currentPageIndex: Int,
     totalPages: Int,
     translatedPagesCount: Int,
-    hasBookTranslations: Boolean,
     pageLines: List<TranslatedLine>,
+    isTranslatingPage: Boolean,
+    isCheckedEmptyPage: Boolean,
+    pageError: String?,
+    banglaOnlyMode: Boolean,
+    onToggleBanglaOnlyMode: (Boolean) -> Unit,
+    onTranslateOrRetryPage: () -> Unit,
     onSelectPage: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -347,8 +356,7 @@ fun BilingualTranslationBottomSheet(
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
 
-    var searchQuery by remember { mutableStateOf("") }
-    var banglaOnlyMode by remember { mutableStateOf(true) }
+    var searchQuery by remember(currentPageIndex) { mutableStateOf("") }
     var copiedIndex by remember { mutableStateOf<Int?>(null) }
     var copiedAllPage by remember { mutableStateOf(false) }
 
@@ -390,7 +398,7 @@ fun BilingualTranslationBottomSheet(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header with page stepper
+            // Header with refresh + page stepper
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -403,7 +411,7 @@ fun BilingualTranslationBottomSheet(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = if (hasBookTranslations) {
+                        text = if (pageLines.isNotEmpty()) {
                             val unit = if (pageLines.size == 1) "paragraph" else "paragraphs"
                             "Page ${currentPageIndex + 1} of $totalPages • ${pageLines.size} $unit"
                         } else {
@@ -413,18 +421,48 @@ fun BilingualTranslationBottomSheet(
                         color = SoftCyan
                     )
                     Text(
-                        text = "$translatedPagesCount / $totalPages pages translated offline",
+                        text = "$translatedPagesCount / $totalPages pages cached offline",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("translated_pages_count_label")
                     )
                 }
 
-                if (totalPages > 1) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (pageLines.isNotEmpty() || isCheckedEmptyPage) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = if (!isTranslatingPage) 0.12f else 0.04f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
+                        ) {
+                            IconButton(
+                                onClick = onTranslateOrRetryPage,
+                                enabled = !isTranslatingPage,
+                                modifier = Modifier
+                                    .testTag("bangla_retranslate_button")
+                                    .minimumInteractiveComponentSize()
+                            ) {
+                                if (isTranslatingPage) {
+                                    CircularProgressIndicator(
+                                        color = SoftCyan,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Re-translate page",
+                                        tint = SoftCyan
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (totalPages > 1) {
                         val canPrev = currentPageIndex > 0
                         val canNext = currentPageIndex < totalPages - 1
 
@@ -471,7 +509,7 @@ fun BilingualTranslationBottomSheet(
                 }
             }
 
-            if (hasBookTranslations && pageLines.isNotEmpty()) {
+            if (pageLines.isNotEmpty()) {
                 // Display mode toggle + Copy Page chip
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -484,7 +522,7 @@ fun BilingualTranslationBottomSheet(
                     ) {
                         FilterChip(
                             selected = banglaOnlyMode,
-                            onClick = { banglaOnlyMode = true },
+                            onClick = { onToggleBanglaOnlyMode(true) },
                             label = {
                                 Text(
                                     text = "শুধু বাংলা",
@@ -502,7 +540,7 @@ fun BilingualTranslationBottomSheet(
 
                         FilterChip(
                             selected = !banglaOnlyMode,
-                            onClick = { banglaOnlyMode = false },
+                            onClick = { onToggleBanglaOnlyMode(false) },
                             label = {
                                 Text(
                                     text = "EN + বাংলা",
@@ -584,39 +622,46 @@ fun BilingualTranslationBottomSheet(
                 }
             }
 
+            if (pageError != null && pageLines.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = ErrorCoral.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, ErrorCoral.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = pageError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
             when {
-                !hasBookTranslations -> {
+                isTranslatingPage && pageLines.isEmpty() -> {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 16.dp)
-                            .glassPanel(shape = RoundedCornerShape(20.dp))
-                            .padding(22.dp),
+                            .padding(vertical = 18.dp)
+                            .glassPanel(shape = RoundedCornerShape(20.dp), highlighted = true)
+                            .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(50.dp)
-                                .background(SoftCyan.copy(alpha = 0.14f), CircleShape)
-                                .border(1.dp, SoftCyan.copy(alpha = 0.35f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Translate,
-                                contentDescription = null,
-                                tint = SoftCyan,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                        CircularProgressIndicator(
+                            color = SoftCyan,
+                            modifier = Modifier.size(34.dp),
+                            strokeWidth = 3.dp
+                        )
                         Text(
-                            text = "Offline Bangla Translation Not Bundled Yet",
+                            text = "Translating Page ${currentPageIndex + 1} to Bangla...",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.Center
                         )
                         Text(
-                            text = "This downloaded manual does not include translations_bn.json yet. Once GitHub Actions converts this manual with GEMINI_API_KEY, tap Re-download High Quality on the bookshelf to get offline paragraph-by-paragraph Bangla.",
+                            text = "Reading paragraphs directly from the manual page and saving to your offline device cache.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -624,28 +669,116 @@ fun BilingualTranslationBottomSheet(
                     }
                 }
 
-                pageLines.isEmpty() -> {
+                pageError != null && pageLines.isEmpty() -> {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 20.dp)
+                            .padding(vertical = 16.dp)
                             .glassPanel(shape = RoundedCornerShape(20.dp))
                             .padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .background(ErrorCoral.copy(alpha = 0.16f), CircleShape)
+                                .border(1.dp, ErrorCoral.copy(alpha = 0.40f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Translate,
+                                contentDescription = null,
+                                tint = ErrorCoral,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                         Text(
-                            text = "No Translatable Text on Page ${currentPageIndex + 1}",
+                            text = "Unable to Translate Page ${currentPageIndex + 1}",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.Center
                         )
                         Text(
-                            text = "This page appears to be an image, diagram, or blank separator.",
+                            text = pageError,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
+                        Button(
+                            onClick = onTranslateOrRetryPage,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("bangla_retry_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Retry Translation", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                pageLines.isEmpty() -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 18.dp)
+                            .glassPanel(shape = RoundedCornerShape(20.dp))
+                            .padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = if (isCheckedEmptyPage) {
+                                "No Readable Text on Page ${currentPageIndex + 1}"
+                            } else {
+                                "Ready to Translate Page ${currentPageIndex + 1}"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = if (isCheckedEmptyPage) {
+                                "This page appears to be an illustration, diagram, or blank separator."
+                            } else {
+                                "Tap below to translate this page to natural Bangla and cache it offline."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(
+                            onClick = onTranslateOrRetryPage,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("bangla_translate_now_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Translate,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isCheckedEmptyPage) "Scan Page Again" else "Translate Page",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
 

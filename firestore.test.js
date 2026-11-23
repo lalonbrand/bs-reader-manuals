@@ -8,8 +8,8 @@ const fs = require("node:fs");
 
 let testEnv;
 const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
-const ALICE_UID = "alice_uid_01";
-const BOB_UID = "bob_uid_02";
+const DEVICE_CANDIDATE_1 = "cand_device_01";
+const DEVICE_CANDIDATE_2 = "cand_device_02";
 const ADMIN_UID = "admin_uid_03";
 
 const [emulatorHost, emulatorPortStr] = (process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8085").split(":");
@@ -43,11 +43,11 @@ beforeEach(async () => {
   }
 });
 
-function buildBatchPayload(uid, overrides = {}) {
+function buildBatchPayload(participantId, overrides = {}) {
   const now = pastDate(2000);
   return {
-    userId: uid,
-    uploaderName: "Alice Tester",
+    userId: participantId,
+    uploaderName: "Exam Coordinator",
     title: "Quality Manual Q&A Set 1",
     fileName: "quality_qa_1.pdf",
     pageCount: 6,
@@ -62,10 +62,10 @@ function buildBatchPayload(uid, overrides = {}) {
   };
 }
 
-function buildQuestionPayload(uid, batchId, overrides = {}) {
+function buildQuestionPayload(participantId, batchId, overrides = {}) {
   const now = pastDate(2000);
   return {
-    userId: uid,
+    userId: participantId,
     batchId,
     batchTitle: "Quality Manual Q&A Set 1",
     questionType: "MCQ",
@@ -83,10 +83,10 @@ function buildQuestionPayload(uid, batchId, overrides = {}) {
   };
 }
 
-function buildSubmissionPayload(uid, overrides = {}) {
+function buildSubmissionPayload(participantId, overrides = {}) {
   const now = pastDate(2000);
   return {
-    userId: uid,
+    userId: participantId,
     candidateName: "Mohidur Rahman",
     phase: "AQC - 10th Phase",
     factoryName: "GMS Composite Knitting Ind. Ltd.",
@@ -107,24 +107,16 @@ function buildSubmissionPayload(uid, overrides = {}) {
   };
 }
 
-test("Unauthenticated users cannot read or write any exam collection", async () => {
-  const unauthDb = testEnv.unauthenticatedContext().firestore();
-  await assertFails(unauthDb.collection("examPdfBatches").where("visibility", "==", "EXAM_BANK").get());
-  await assertFails(unauthDb.collection("examQuestions").where("visibility", "==", "EXAM_BANK").get());
-  await assertFails(unauthDb.collection("examSubmissions").where("status", "==", "SUBMITTED").get());
-  await assertFails(unauthDb.collection("examPdfBatches").doc("batch_1").set(buildBatchPayload(ALICE_UID)));
-});
+test("Candidates without sign-in can upload Q&A PDFs, read exam questions, and submit exam scores", async () => {
+  const guestDb = testEnv.unauthenticatedContext().firestore();
+  const batchRef = guestDb.collection("examPdfBatches").doc("batch_01");
 
-test("Atomic WriteBatch creates ExamPdfBatch and all 3 question types; subsequent PDF upload appends", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const batchRef = aliceDb.collection("examPdfBatches").doc("batch_01");
-
-  const writeBatch = aliceDb.batch();
-  writeBatch.set(batchRef, buildBatchPayload(ALICE_UID));
-  writeBatch.set(aliceDb.collection("examQuestions").doc("q_mcq_1"), buildQuestionPayload(ALICE_UID, "batch_01"));
+  const writeBatch = guestDb.batch();
+  writeBatch.set(batchRef, buildBatchPayload(DEVICE_CANDIDATE_1));
+  writeBatch.set(guestDb.collection("examQuestions").doc("q_mcq_1"), buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_01"));
   writeBatch.set(
-    aliceDb.collection("examQuestions").doc("q_fill_1"),
-    buildQuestionPayload(ALICE_UID, "batch_01", {
+    guestDb.collection("examQuestions").doc("q_fill_1"),
+    buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_01", {
       questionType: "FILL_IN_BLANK",
       orderIndex: 1,
       prompt: "Needle detection sensitivity calibration must be checked every ____ hours.",
@@ -135,8 +127,8 @@ test("Atomic WriteBatch creates ExamPdfBatch and all 3 question types; subsequen
     })
   );
   writeBatch.set(
-    aliceDb.collection("examQuestions").doc("q_desc_1"),
-    buildQuestionPayload(ALICE_UID, "batch_01", {
+    guestDb.collection("examQuestions").doc("q_desc_1"),
+    buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_01", {
       questionType: "DESCRIPTIVE",
       orderIndex: 2,
       prompt: "Describe the corrective procedure when a broken needle tip is missing.",
@@ -148,130 +140,108 @@ test("Atomic WriteBatch creates ExamPdfBatch and all 3 question types; subsequen
   );
   await assertSucceeds(writeBatch.commit());
 
-  // Append a second PDF batch later
-  const batch2Ref = aliceDb.collection("examPdfBatches").doc("batch_02");
-  const writeBatch2 = aliceDb.batch();
-  writeBatch2.set(batch2Ref, buildBatchPayload(ALICE_UID, { title: "Mold Control Q&A" }));
+  // Append a second PDF batch later without sign-in
+  const batch2Ref = guestDb.collection("examPdfBatches").doc("batch_02");
+  const writeBatch2 = guestDb.batch();
+  writeBatch2.set(batch2Ref, buildBatchPayload(DEVICE_CANDIDATE_1, { title: "Mold Control Q&A" }));
   writeBatch2.set(
-    aliceDb.collection("examQuestions").doc("q_mcq_2"),
-    buildQuestionPayload(ALICE_UID, "batch_02", { batchTitle: "Mold Control Q&A", orderIndex: 0 })
+    guestDb.collection("examQuestions").doc("q_mcq_2"),
+    buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_02", { batchTitle: "Mold Control Q&A", orderIndex: 0 })
   );
   await assertSucceeds(writeBatch2.commit());
 
   // Filtered Kotlin queries succeed
-  await assertSucceeds(aliceDb.collection("examPdfBatches").where("visibility", "==", "EXAM_BANK").get());
-  await assertSucceeds(aliceDb.collection("examQuestions").where("visibility", "==", "EXAM_BANK").get());
+  await assertSucceeds(guestDb.collection("examPdfBatches").where("visibility", "==", "EXAM_BANK").get());
+  await assertSucceeds(guestDb.collection("examQuestions").where("visibility", "==", "EXAM_BANK").get());
 
   // Unfiltered list queries fail
-  await assertFails(aliceDb.collection("examPdfBatches").get());
-  await assertFails(aliceDb.collection("examQuestions").get());
+  await assertFails(guestDb.collection("examPdfBatches").get());
+  await assertFails(guestDb.collection("examQuestions").get());
+
+  // Toggle question visibility and delete works
+  await assertSucceeds(guestDb.collection("examQuestions").doc("q_mcq_2").update({ active: false, updatedAt: pastDate(500) }));
+  await assertSucceeds(guestDb.collection("examQuestions").doc("q_mcq_2").delete());
 });
 
 test("Question validation blocks invalid MCQ indices, orphaned questions, ghost fields, and future timestamps", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  await assertSucceeds(aliceDb.collection("examPdfBatches").doc("batch_valid").set(buildBatchPayload(ALICE_UID)));
+  const guestDb = testEnv.unauthenticatedContext().firestore();
+  await assertSucceeds(guestDb.collection("examPdfBatches").doc("batch_valid").set(buildBatchPayload(DEVICE_CANDIDATE_1)));
 
   // Orphaned batchId fails
   await assertFails(
-    aliceDb.collection("examQuestions").doc("q_orphan").set(buildQuestionPayload(ALICE_UID, "nonexistent_batch"))
+    guestDb.collection("examQuestions").doc("q_orphan").set(buildQuestionPayload(DEVICE_CANDIDATE_1, "nonexistent_batch"))
   );
 
   // Invalid MCQ index out of bounds fails
   await assertFails(
-    aliceDb.collection("examQuestions").doc("q_bad_idx").set(
-      buildQuestionPayload(ALICE_UID, "batch_valid", { correctOptionIndex: 4 })
+    guestDb.collection("examQuestions").doc("q_bad_idx").set(
+      buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_valid", { correctOptionIndex: 4 })
     )
   );
 
   // Extra ghost field fails
   await assertFails(
-    aliceDb.collection("examQuestions").doc("q_ghost").set(
-      buildQuestionPayload(ALICE_UID, "batch_valid", { id: "q_ghost", adminOverride: true })
+    guestDb.collection("examQuestions").doc("q_ghost").set(
+      buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_valid", { id: "q_ghost", adminOverride: true })
     )
   );
 
   // Future timestamp tampering fails
   await assertFails(
-    aliceDb.collection("examQuestions").doc("q_future").set(
-      buildQuestionPayload(ALICE_UID, "batch_valid", { createdAt: new Date(Date.now() + 120000) })
+    guestDb.collection("examQuestions").doc("q_future").set(
+      buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_valid", { createdAt: new Date(Date.now() + 120000) })
     )
   );
 });
 
-test("Cross-user protections on questions/batches vs admin override", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+test("Candidate submissions allow ranking queries without sign-in and lock terminal scores against tampering or deletion", async () => {
+  const guestDb = testEnv.unauthenticatedContext().firestore();
   const adminDb = testEnv.authenticatedContext(ADMIN_UID, {
     email: "qureshialrajin@gmail.com",
     email_verified: true,
   }).firestore();
 
-  await assertSucceeds(aliceDb.collection("examPdfBatches").doc("batch_a").set(buildBatchPayload(ALICE_UID)));
-  await assertSucceeds(aliceDb.collection("examQuestions").doc("q_a").set(buildQuestionPayload(ALICE_UID, "batch_a")));
-
-  // Bob can read questions to take the exam
-  await assertSucceeds(bobDb.collection("examQuestions").where("visibility", "==", "EXAM_BANK").get());
-
-  // Bob cannot update or delete Alice's question or batch
-  await assertFails(bobDb.collection("examQuestions").doc("q_a").update({ active: false, updatedAt: pastDate(500) }));
-  await assertFails(bobDb.collection("examQuestions").doc("q_a").delete());
-  await assertFails(bobDb.collection("examPdfBatches").doc("batch_a").delete());
-
-  // Alice can toggle her own question
-  await assertSucceeds(aliceDb.collection("examQuestions").doc("q_a").update({ active: false, updatedAt: pastDate(500) }));
-
-  // Verified admin email can also manage questions
-  await assertSucceeds(adminDb.collection("examQuestions").doc("q_a").update({ marks: 3, updatedAt: pastDate(400) }));
-});
-
-test("Candidate submissions allow ranking queries, lock terminal scores, and isolate private examReviews", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-
-  const subId = "sub_alice_1";
-  const batch = aliceDb.batch();
-  batch.set(aliceDb.collection("examSubmissions").doc(subId), buildSubmissionPayload(ALICE_UID));
-  batch.set(
-    aliceDb.collection("users").doc(ALICE_UID).collection("examReviews").doc(subId),
-    {
-      submissionId: subId,
-      candidateName: "Mohidur Rahman",
-      phase: "AQC - 10th Phase",
-      factoryName: "GMS Composite Knitting Ind. Ltd.",
-      obtainedMarks: 7.5,
-      totalMarks: 10,
-      items: [
-        {
-          questionId: "q_1",
-          questionType: "MCQ",
-          prompt: "Sample?",
-          userAnswer: "2.5",
-          referenceAnswer: "2.5",
-          maxMarks: 1,
-          awardedMarks: 1,
-          feedback: "Exact match",
-        },
-      ],
-      createdAt: pastDate(2000),
-    }
+  const subId = "sub_cand_1";
+  await assertSucceeds(
+    guestDb.collection("examSubmissions").doc(subId).set(buildSubmissionPayload(DEVICE_CANDIDATE_1))
   );
-  await assertSucceeds(batch.commit());
 
-  // Bob can list submitted scores to calculate rank across total candidates
-  await assertSucceeds(bobDb.collection("examSubmissions").where("status", "==", "SUBMITTED").get());
+  // Another candidate can list submitted scores to compute rank across total candidates
+  await assertSucceeds(guestDb.collection("examSubmissions").where("status", "==", "SUBMITTED").get());
 
   // Unfiltered submissions list fails
-  await assertFails(bobDb.collection("examSubmissions").get());
+  await assertFails(guestDb.collection("examSubmissions").get());
 
-  // Alice cannot tamper with her submitted score after submission (terminal state lock)
+  // Candidate cannot tamper with or delete submitted scores (terminal state lock)
   await assertFails(
-    aliceDb.collection("examSubmissions").doc(subId).update({ obtainedMarks: 10, percentage: 100, updatedAt: pastDate(500) })
+    guestDb.collection("examSubmissions").doc(subId).update({ obtainedMarks: 10, percentage: 100, updatedAt: pastDate(500) })
+  );
+  await assertFails(guestDb.collection("examSubmissions").doc(subId).delete());
+
+  // Invalid score exceeding totalMarks is rejected
+  await assertFails(
+    guestDb.collection("examSubmissions").doc("sub_bad_marks").set(
+      buildSubmissionPayload(DEVICE_CANDIDATE_2, { obtainedMarks: 12, totalMarks: 10 })
+    )
   );
 
-  // Bob CANNOT read or write Alice's private examReviews
-  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("examReviews").get());
-  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("examReviews").doc(subId).get());
+  // Admin can remove a test submission if needed
+  await assertSucceeds(adminDb.collection("examSubmissions").doc(subId).delete());
+});
 
-  // Alice CAN read her own examReviews
-  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).collection("examReviews").get());
+test("Private users/{userId}/examReviews remains locked against unauthenticated reads or writes", async () => {
+  const guestDb = testEnv.unauthenticatedContext().firestore();
+  await assertFails(guestDb.collection("users").doc(DEVICE_CANDIDATE_1).collection("examReviews").get());
+  await assertFails(
+    guestDb.collection("users").doc(DEVICE_CANDIDATE_1).collection("examReviews").doc("sub_1").set({
+      submissionId: "sub_1",
+      candidateName: "Test User",
+      phase: "Phase 1",
+      factoryName: "Factory A",
+      obtainedMarks: 5,
+      totalMarks: 10,
+      items: [{ questionId: "q1" }],
+      createdAt: pastDate(1000),
+    })
+  );
 });

@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.ai.PageTranslationService
 import com.example.data.local.BookEntity
 import com.example.data.local.BookTranslationLoader
 import com.example.data.local.FolioDatabase
@@ -14,6 +15,7 @@ import com.example.data.local.SettingsDataStore
 import com.example.data.local.TranslatedLine
 import com.example.data.repository.BookRepository
 import com.example.data.storage.WebpPageCache
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +37,11 @@ data class ReaderUiState(
     val surfaceTone: ReaderSurfaceTone = ReaderSurfaceTone.PAPER,
     val showPageOverlay: Boolean = true,
     val pageSoundEnabled: Boolean = true,
+    val banglaOnlyMode: Boolean = true,
     val translationsByPage: Map<Int, List<TranslatedLine>> = emptyMap(),
+    val translatingPages: Set<Int> = emptySet(),
+    val translationErrorsByPage: Map<Int, String> = emptyMap(),
+    val checkedEmptyPages: Set<Int> = emptySet(),
     val isLoading: Boolean = true,
     val errorMessage: String? = null
 )
@@ -45,7 +51,8 @@ class ReaderViewModel(
     private val bookId: String,
     private val repository: BookRepository,
     private val settingsStore: SettingsDataStore,
-    private val pageCache: WebpPageCache = WebpPageCache()
+    private val pageCache: WebpPageCache = WebpPageCache(),
+    private val pageTranslationService: PageTranslationService = PageTranslationService()
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(ReaderUiState())
@@ -58,7 +65,8 @@ class ReaderViewModel(
                     it.copy(
                         surfaceTone = prefs.surfaceTone,
                         showPageOverlay = prefs.showPageOverlay,
-                        pageSoundEnabled = prefs.pageSoundEnabled
+                        pageSoundEnabled = prefs.pageSoundEnabled,
+                        banglaOnlyMode = prefs.banglaOnlyMode
                     )
                 }
             }
@@ -156,6 +164,67 @@ class ReaderViewModel(
         loadTriplet(files, clamped)
     }
 
+    fun translateCurrentPageIfNeeded(forceRefresh: Boolean = false) {
+        val oneBasedPage = _uiState.value.currentPageIndex + 1
+        translatePageIfNeeded(oneBasedPage = oneBasedPage, forceRefresh = forceRefresh)
+    }
+
+    fun translatePageIfNeeded(oneBasedPage: Int, forceRefresh: Boolean = false) {
+        val state = _uiState.value
+        val bookDir = state.book?.localDirPath ?: return
+        val pageFile = state.pageFiles.getOrNull(oneBasedPage - 1) ?: return
+
+        if (!forceRefresh && (state.translationsByPage[oneBasedPage]?.isNotEmpty() == true || oneBasedPage in state.checkedEmptyPages)) {
+            return
+        }
+        if (oneBasedPage in state.translatingPages) return
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    translatingPages = it.translatingPages + oneBasedPage,
+                    translationErrorsByPage = it.translationErrorsByPage - oneBasedPage
+                )
+            }
+
+            try {
+                val paragraphs = pageTranslationService.translatePageImage(pageFile)
+                if (paragraphs.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        BookTranslationLoader.saveCachedPageTranslation(bookDir, oneBasedPage, paragraphs)
+                    }
+                    _uiState.update {
+                        it.copy(
+                            translationsByPage = it.translationsByPage + (oneBasedPage to paragraphs),
+                            checkedEmptyPages = it.checkedEmptyPages - oneBasedPage,
+                            translatingPages = it.translatingPages - oneBasedPage,
+                            translationErrorsByPage = it.translationErrorsByPage - oneBasedPage
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            checkedEmptyPages = it.checkedEmptyPages + oneBasedPage,
+                            translatingPages = it.translatingPages - oneBasedPage
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                _uiState.update { it.copy(translatingPages = it.translatingPages - oneBasedPage) }
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        translatingPages = it.translatingPages - oneBasedPage,
+                        translationErrorsByPage = it.translationErrorsByPage + (
+                            oneBasedPage to (e.localizedMessage ?: "Failed to translate page $oneBasedPage.")
+                            )
+                    )
+                }
+            }
+        }
+    }
+
     fun setSurfaceTone(tone: ReaderSurfaceTone) {
         viewModelScope.launch {
             settingsStore.setSurfaceTone(tone)
@@ -171,6 +240,12 @@ class ReaderViewModel(
     fun setPageSoundEnabled(enabled: Boolean) {
         viewModelScope.launch {
             settingsStore.setPageSoundEnabled(enabled)
+        }
+    }
+
+    fun setBanglaOnlyMode(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setBanglaOnlyMode(enabled)
         }
     }
 

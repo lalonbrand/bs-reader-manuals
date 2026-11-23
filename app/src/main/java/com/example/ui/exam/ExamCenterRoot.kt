@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -91,9 +90,7 @@ import kotlinx.coroutines.flow.collectLatest
 @Composable
 fun ExamCenterRoot(
     viewModel: ExamViewModel,
-    userDisplayName: String,
-    onNavigateBack: () -> Unit,
-    onSignOut: () -> Unit
+    onNavigateBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -158,9 +155,7 @@ fun ExamCenterRoot(
                         .align(Alignment.TopCenter)
                 ) {
                     ExamHubHeader(
-                        userDisplayName = userDisplayName,
-                        onNavigateBack = onNavigateBack,
-                        onSignOut = onSignOut
+                        onNavigateBack = onNavigateBack
                     )
 
                     LazyRow(
@@ -328,73 +323,46 @@ fun ExamCenterRoot(
 
 @Composable
 private fun ExamHubHeader(
-    userDisplayName: String,
-    onNavigateBack: () -> Unit,
-    onSignOut: () -> Unit
+    onNavigateBack: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = Color.White.copy(alpha = 0.10f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
-            ) {
-                IconButton(
-                    onClick = onNavigateBack,
-                    modifier = Modifier
-                        .testTag("exam_back_button")
-                        .minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to BS Reader",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Exam Center",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "Signed in: $userDisplayName",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
-        }
-
         Surface(
             shape = CircleShape,
             color = Color.White.copy(alpha = 0.10f),
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f))
         ) {
             IconButton(
-                onClick = onSignOut,
+                onClick = onNavigateBack,
                 modifier = Modifier
-                    .testTag("exam_sign_out_button")
+                    .testTag("exam_back_button")
                     .minimumInteractiveComponentSize()
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Logout,
-                    contentDescription = "Sign out",
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back to BS Reader",
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Exam Center",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = "Enter Name, Factory & Phase to Attend • AI Graded Ranks",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
         }
     }
 }

@@ -372,20 +372,22 @@ fun ReaderScreen(
                                 )
                             }
 
-                            val hasBanglaBook = uiState.translationsByPage.values.any { it.isNotEmpty() }
+                            val oneBasedCurrent = uiState.currentPageIndex + 1
+                            val isCurrentPageCached = uiState.translationsByPage[oneBasedCurrent]?.isNotEmpty() == true
+                            val isCurrentPageTranslating = oneBasedCurrent in uiState.translatingPages
                             Surface(
                                 shape = RoundedCornerShape(50),
-                                color = if (hasBanglaBook) {
+                                color = if (isCurrentPageCached || isCurrentPageTranslating) {
                                     SoftCyan.copy(alpha = 0.18f)
                                 } else {
-                                    Color.White.copy(alpha = 0.10f)
+                                    Color.White.copy(alpha = 0.12f)
                                 },
                                 border = BorderStroke(
                                     1.dp,
-                                    if (hasBanglaBook) {
+                                    if (isCurrentPageCached || isCurrentPageTranslating) {
                                         SoftCyan.copy(alpha = 0.55f)
                                     } else {
-                                        Color.White.copy(alpha = 0.22f)
+                                        SoftCyan.copy(alpha = 0.30f)
                                     }
                                 ),
                                 modifier = Modifier
@@ -402,13 +404,13 @@ fun ReaderScreen(
                                     Icon(
                                         imageVector = Icons.Default.Translate,
                                         contentDescription = stringResource(R.string.cd_bangla_translate),
-                                        tint = if (hasBanglaBook) SoftCyan else chromeOnSurface,
+                                        tint = SoftCyan,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Text(
                                         text = stringResource(R.string.action_bangla_translate),
                                         style = MaterialTheme.typography.labelLarge.copy(fontFamily = NotoBengaliFont),
-                                        color = if (hasBanglaBook) SoftCyan else chromeOnSurface
+                                        color = if (isCurrentPageCached) SoftCyan else chromeOnSurface
                                     )
                                 }
                             }
@@ -756,15 +758,32 @@ fun ReaderScreen(
         )
     }
 
+    LaunchedEffect(showBanglaSheet, uiState.currentPageIndex, uiState.pageFiles.size) {
+        if (showBanglaSheet && uiState.pageFiles.isNotEmpty()) {
+            viewModel.translateCurrentPageIfNeeded(forceRefresh = false)
+        }
+    }
+
     if (showBanglaSheet) {
         val oneBasedPage = uiState.currentPageIndex + 1
         val translatedPagesCount = uiState.translationsByPage.count { (_, items) -> items.isNotEmpty() }
+        val pageLines = uiState.translationsByPage[oneBasedPage].orEmpty()
         BilingualTranslationBottomSheet(
             currentPageIndex = uiState.currentPageIndex,
             totalPages = uiState.pageFiles.size,
             translatedPagesCount = translatedPagesCount,
-            hasBookTranslations = translatedPagesCount > 0,
-            pageLines = uiState.translationsByPage[oneBasedPage].orEmpty(),
+            pageLines = pageLines,
+            isTranslatingPage = oneBasedPage in uiState.translatingPages,
+            isCheckedEmptyPage = oneBasedPage in uiState.checkedEmptyPages,
+            pageError = uiState.translationErrorsByPage[oneBasedPage],
+            banglaOnlyMode = uiState.banglaOnlyMode,
+            onToggleBanglaOnlyMode = viewModel::setBanglaOnlyMode,
+            onTranslateOrRetryPage = {
+                viewModel.translatePageIfNeeded(
+                    oneBasedPage = oneBasedPage,
+                    forceRefresh = pageLines.isNotEmpty() || oneBasedPage in uiState.checkedEmptyPages
+                )
+            },
             onSelectPage = viewModel::goToPage,
             onDismiss = { showBanglaSheet = false }
         )

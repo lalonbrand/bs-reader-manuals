@@ -36,7 +36,7 @@ service cloud.firestore {
     }
 
     function isValidBatch(data) {
-      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+      return isValidId(data.userId) &&
              data.uploaderName is string && data.uploaderName.size() >= 1 && data.uploaderName.size() <= 100 &&
              data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
              data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200 &&
@@ -51,7 +51,7 @@ service cloud.firestore {
     }
 
     function isValidQuestion(data) {
-      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+      return isValidId(data.userId) &&
              isValidId(data.batchId) &&
              data.batchTitle is string && data.batchTitle.size() >= 1 && data.batchTitle.size() <= 150 &&
              (data.questionType == 'MCQ' || data.questionType == 'FILL_IN_BLANK' || data.questionType == 'DESCRIPTIVE') &&
@@ -77,7 +77,7 @@ service cloud.firestore {
     }
 
     function isValidSubmission(data) {
-      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+      return isValidId(data.userId) &&
              data.candidateName is string && data.candidateName.size() >= 2 && data.candidateName.size() <= 100 &&
              data.phase is string && data.phase.size() >= 1 && data.phase.size() <= 100 &&
              data.factoryName is string && data.factoryName.size() >= 1 && data.factoryName.size() <= 150 &&
@@ -117,14 +117,10 @@ service cloud.firestore {
     }
 
     match /examPdfBatches/{batchId} {
-      allow get: if isSignedIn() && isValidId(batchId) && (
-        existing().userId == request.auth.uid || existing().visibility == 'EXAM_BANK'
-      );
-      allow list: if isSignedIn() && existing().visibility == 'EXAM_BANK';
+      allow get: if isValidId(batchId) && existing().visibility == 'EXAM_BANK';
+      allow list: if existing().visibility == 'EXAM_BANK';
 
-      allow create: if isSignedIn() &&
-                       isValidId(batchId) &&
-                       incoming().userId == request.auth.uid &&
+      allow create: if isValidId(batchId) &&
                        incoming().keys().hasAll([
                          'userId', 'uploaderName', 'title', 'fileName',
                          'pageCount', 'questionCount', 'mcqCount', 'fillCount', 'descriptiveCount',
@@ -137,28 +133,22 @@ service cloud.firestore {
                        ]) &&
                        isValidBatch(incoming());
 
-      allow update: if isSignedIn() &&
-                       isValidId(batchId) &&
+      allow update: if isValidId(batchId) &&
                        isValidBatch(incoming()) &&
-                       (existing().userId == request.auth.uid || isAdmin()) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'questionCount', 'mcqCount', 'fillCount', 'descriptiveCount', 'updatedAt']);
 
-      allow delete: if isSignedIn() && isValidId(batchId) && (
-        existing().userId == request.auth.uid || isAdmin()
+      allow delete: if isValidId(batchId) && (
+        existing().visibility == 'EXAM_BANK' || isAdmin()
       );
     }
 
     match /examQuestions/{questionId} {
-      allow get: if isSignedIn() && isValidId(questionId) && (
-        existing().userId == request.auth.uid || existing().visibility == 'EXAM_BANK'
-      );
-      allow list: if isSignedIn() && existing().visibility == 'EXAM_BANK';
+      allow get: if isValidId(questionId) && existing().visibility == 'EXAM_BANK';
+      allow list: if existing().visibility == 'EXAM_BANK';
 
-      allow create: if isSignedIn() &&
-                       isValidId(questionId) &&
-                       incoming().userId == request.auth.uid &&
+      allow create: if isValidId(questionId) &&
                        incoming().keys().hasAll([
                          'userId', 'batchId', 'batchTitle', 'questionType', 'orderIndex',
                          'prompt', 'options', 'correctOptionIndex', 'correctAnswer',
@@ -175,10 +165,8 @@ service cloud.firestore {
                          existsAfter(/databases/$(database)/documents/examPdfBatches/$(incoming().batchId))
                        );
 
-      allow update: if isSignedIn() &&
-                       isValidId(questionId) &&
+      allow update: if isValidId(questionId) &&
                        isValidQuestion(incoming()) &&
-                       (existing().userId == request.auth.uid || isAdmin()) &&
                        incoming().userId == existing().userId &&
                        incoming().batchId == existing().batchId &&
                        incoming().createdAt == existing().createdAt &&
@@ -186,20 +174,16 @@ service cloud.firestore {
                          'prompt', 'options', 'correctOptionIndex', 'correctAnswer', 'marks', 'active', 'updatedAt'
                        ]);
 
-      allow delete: if isSignedIn() && isValidId(questionId) && (
-        existing().userId == request.auth.uid || isAdmin()
+      allow delete: if isValidId(questionId) && (
+        existing().visibility == 'EXAM_BANK' || isAdmin()
       );
     }
 
     match /examSubmissions/{submissionId} {
-      allow get: if isSignedIn() && isValidId(submissionId) && (
-        existing().userId == request.auth.uid || existing().status == 'SUBMITTED'
-      );
-      allow list: if isSignedIn() && existing().status == 'SUBMITTED';
+      allow get: if isValidId(submissionId) && existing().status == 'SUBMITTED';
+      allow list: if existing().status == 'SUBMITTED';
 
-      allow create: if isSignedIn() &&
-                       isValidId(submissionId) &&
-                       incoming().userId == request.auth.uid &&
+      allow create: if isValidId(submissionId) &&
                        incoming().keys().hasAll([
                          'userId', 'candidateName', 'phase', 'factoryName',
                          'obtainedMarks', 'totalMarks', 'percentage', 'questionCount',
@@ -221,9 +205,7 @@ service cloud.firestore {
                        isAdmin() &&
                        existing().status != 'SUBMITTED';
 
-      allow delete: if isSignedIn() && isValidId(submissionId) && (
-        existing().userId == request.auth.uid || isAdmin()
-      );
+      allow delete: if isValidId(submissionId) && isAdmin();
     }
 
     match /users/{userId}/examReviews/{submissionId} {

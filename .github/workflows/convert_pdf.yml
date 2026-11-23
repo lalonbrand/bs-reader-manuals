@@ -74,7 +74,7 @@ jobs:
           rm -f "$STATUS_FILE"
 
           if [ -z "${GEMINI_API_KEY:-}" ]; then
-            echo "::warning::GEMINI_API_KEY secret is not set — Bangla translations_bn.json will NOT be generated."
+            echo "GEMINI_API_KEY not set — skipping optional pre-bundled translations_bn.json (in-app Firebase AI Logic translation enabled)."
           else
             echo "GEMINI_API_KEY secret detected; enabling 2-pass Bangla translation."
           fi
@@ -171,9 +171,9 @@ jobs:
                       print(f"Verified {zname}: {translated_pages}/{total_pages} pages, {total_paras} paragraphs ({summary_detail})", file=sys.stderr)
                       print(f"| `{zname}` | {translated_pages} / {total_pages} | {total_paras} | Included | {summary_detail} |")
                   else:
-                      reason = detail or "Not rebuilt in this run or GEMINI_API_KEY skipped."
-                      print(f"::warning::translations_bn.json NOT found inside {zpath}: {reason}", file=sys.stderr)
-                      print(f"| `{zname}` | 0 / {total_pages} | 0 | Not included | {reason} |")
+                      reason = detail or "On-demand in-app translation active."
+                      print(f"Info: {zname} has no bundled translations_bn.json ({reason}). App will translate pages on demand.", file=sys.stderr)
+                      print(f"| `{zname}` | 0 / {total_pages} | 0 | On-demand in app | {reason} |")
           PY
 
           rm -rf tmp_pdfs

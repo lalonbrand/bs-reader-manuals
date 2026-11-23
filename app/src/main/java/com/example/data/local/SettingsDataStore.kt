@@ -38,7 +38,8 @@ data class ReaderPreferences(
     val catalogUrl: String = DEFAULT_CATALOG_URL,
     val surfaceTone: ReaderSurfaceTone = ReaderSurfaceTone.PAPER,
     val showPageOverlay: Boolean = true,
-    val pageSoundEnabled: Boolean = true
+    val pageSoundEnabled: Boolean = true,
+    val banglaOnlyMode: Boolean = true
 )
 
 class SettingsDataStore(private val context: Context) {
@@ -49,6 +50,7 @@ class SettingsDataStore(private val context: Context) {
         val SURFACE_TONE = stringPreferencesKey("surface_tone")
         val SHOW_PAGE_OVERLAY = booleanPreferencesKey("show_page_overlay")
         val PAGE_SOUND_ENABLED = booleanPreferencesKey("page_sound_enabled")
+        val BANGLA_ONLY_MODE = booleanPreferencesKey("bangla_only_mode")
         val NOTIFICATIONS_JSON = stringPreferencesKey("notifications_json")
         val KNOWN_CATALOG_IDS_JSON = stringPreferencesKey("known_catalog_ids_json")
     }
@@ -61,7 +63,8 @@ class SettingsDataStore(private val context: Context) {
             catalogUrl = prefs[Keys.CATALOG_URL]?.takeIf { it.isNotBlank() } ?: DEFAULT_CATALOG_URL,
             surfaceTone = tone,
             showPageOverlay = prefs[Keys.SHOW_PAGE_OVERLAY] ?: true,
-            pageSoundEnabled = prefs[Keys.PAGE_SOUND_ENABLED] ?: true
+            pageSoundEnabled = prefs[Keys.PAGE_SOUND_ENABLED] ?: true,
+            banglaOnlyMode = prefs[Keys.BANGLA_ONLY_MODE] ?: true
         )
     }
 
@@ -84,6 +87,10 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setPageSoundEnabled(enabled: Boolean) {
         context.folioSettingsStore.edit { it[Keys.PAGE_SOUND_ENABLED] = enabled }
+    }
+
+    suspend fun setBanglaOnlyMode(enabled: Boolean) {
+        context.folioSettingsStore.edit { it[Keys.BANGLA_ONLY_MODE] = enabled }
     }
 
     /**

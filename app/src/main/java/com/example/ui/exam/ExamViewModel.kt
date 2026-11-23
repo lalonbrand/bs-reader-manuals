@@ -17,6 +17,8 @@ import com.example.data.exam.ExamQuestion
 import com.example.data.exam.ExamRepository
 import com.example.data.exam.ExamReview
 import com.example.data.exam.ExamSubmission
+import com.example.data.exam.GradedAnswerItem
+import com.example.data.exam.LocalExamReviewStore
 import com.example.data.exam.QuestionType
 import com.example.data.exam.RankedSubmission
 import com.example.data.exam.computeCandidateRankings
@@ -38,7 +40,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val TAG = "ExamViewModel"
-private const val ADMIN_EMAIL = "qureshialrajin@gmail.com"
 
 enum class ExamHubTab(val label: String) {
     ATTEND("Attend Exam"),
@@ -91,13 +92,11 @@ data class ExamResultView(
     val fillTotalMarks: Int,
     val descMarks: Double,
     val descTotalMarks: Int,
-    val gradedItems: List<com.example.data.exam.GradedAnswerItem>
+    val gradedItems: List<GradedAnswerItem>
 )
 
 data class ExamUiState(
     val currentUserId: String = "",
-    val uploaderName: String = "",
-    val isAdmin: Boolean = false,
     val selectedTab: ExamHubTab = ExamHubTab.ATTEND,
     val dataState: ExamDataState = ExamDataState.Loading,
     val candidateName: String = "",
@@ -120,12 +119,12 @@ sealed interface ExamEvent {
 class ExamViewModel(
     private val repository: ExamRepository,
     private val aiService: ExamAiService,
-    private val currentUserId: String,
-    private val uploaderName: String,
-    userEmail: String?
+    private val reviewStore: LocalExamReviewStore,
+    private val currentUserId: String
 ) : ViewModel() {
 
-    private val isAdminUser = userEmail.equals(ADMIN_EMAIL, ignoreCase = true)
+    private val savedProfile = reviewStore.loadCandidateProfile()
+    private val _localReviews = MutableStateFlow(reviewStore.getReviews())
 
     private val _events = MutableSharedFlow<ExamEvent>(extraBufferCapacity = 8)
     val events = _events.asSharedFlow()
@@ -133,9 +132,9 @@ class ExamViewModel(
     private val _interactionState = MutableStateFlow(
         ExamUiState(
             currentUserId = currentUserId,
-            uploaderName = uploaderName,
-            isAdmin = isAdminUser,
-            candidateName = uploaderName.takeIf { it.isNotBlank() && it != "Google User" }.orEmpty()
+            candidateName = savedProfile.candidateName,
+            phase = savedProfile.phase,
+            factoryName = savedProfile.factoryName
         )
     )
 
@@ -151,20 +150,15 @@ class ExamViewModel(
         .map { Result.success(it) }
         .catch { e -> emit(handleStreamError("examSubmissions", e)) }
 
-    private val reviewsStream: Flow<Result<List<ExamReview>>> = repository.observeUserReviews(currentUserId)
-        .map { Result.success(it) }
-        .catch { e -> emit(handleStreamError("examReviews", e)) }
-
     private val firestoreDataState: Flow<ExamDataState> = combine(
         batchesStream,
         questionsStream,
         submissionsStream,
-        reviewsStream
-    ) { batchesRes, questionsRes, submissionsRes, reviewsRes ->
+        _localReviews
+    ) { batchesRes, questionsRes, submissionsRes, reviews ->
         val firstError = batchesRes.exceptionOrNull()
             ?: questionsRes.exceptionOrNull()
             ?: submissionsRes.exceptionOrNull()
-            ?: reviewsRes.exceptionOrNull()
 
         if (firstError != null) {
             ExamDataState.Error(firstError.localizedMessage ?: "Failed to load exam data from cloud.")
@@ -172,7 +166,6 @@ class ExamViewModel(
             val batches = batchesRes.getOrDefault(emptyList())
             val questions = questionsRes.getOrDefault(emptyList())
             val submissions = submissionsRes.getOrDefault(emptyList())
-            val reviews = reviewsRes.getOrDefault(emptyList())
             ExamDataState.Ready(
                 batches = batches,
                 questions = questions,
@@ -317,13 +310,15 @@ class ExamViewModel(
         val draft = _interactionState.value.pendingDraft ?: return
         if (draft.isSaving || draft.questions.isEmpty()) return
 
+        val resolvedUploader = _interactionState.value.candidateName.trim().ifBlank { "Exam Coordinator" }
+
         viewModelScope.launch {
             _interactionState.update { state ->
                 state.copy(pendingDraft = state.pendingDraft?.copy(isSaving = true))
             }
             val result = repository.uploadBatchAndQuestions(
-                userId = currentUserId,
-                uploaderName = uploaderName,
+                participantId = currentUserId,
+                uploaderName = resolvedUploader,
                 title = draft.title.ifBlank { draft.fileName },
                 fileName = draft.fileName,
                 pageCount = draft.pageCount,
@@ -427,6 +422,8 @@ class ExamViewModel(
             return
         }
 
+        reviewStore.saveCandidateProfile(name, phase, factory)
+
         _interactionState.update {
             it.copy(
                 latestResult = null,
@@ -494,7 +491,7 @@ class ExamViewModel(
                 )
 
                 val saveResult = repository.submitExamResult(
-                    userId = currentUserId,
+                    participantId = currentUserId,
                     candidateName = session.candidateName,
                     phase = session.phase,
                     factoryName = session.factoryName,
@@ -503,6 +500,19 @@ class ExamViewModel(
 
                 saveResult.fold(
                     onSuccess = { submissionId ->
+                        val localReview = ExamReview(
+                            id = submissionId,
+                            submissionId = submissionId,
+                            candidateName = session.candidateName,
+                            phase = session.phase,
+                            factoryName = session.factoryName,
+                            obtainedMarks = summary.obtainedMarks,
+                            totalMarks = summary.totalMarks.toLong(),
+                            items = summary.items
+                        )
+                        reviewStore.saveReview(localReview)
+                        _localReviews.value = reviewStore.getReviews()
+
                         _interactionState.update {
                             it.copy(
                                 activeSession = null,
@@ -558,12 +568,11 @@ class ExamViewModel(
     }
 
     fun inspectOwnReview(submissionId: String) {
-        val ready = uiState.value.dataState as? ExamDataState.Ready ?: return
-        val found = ready.userReviews.firstOrNull { it.submissionId == submissionId || it.id == submissionId }
+        val found = _localReviews.value.firstOrNull { it.submissionId == submissionId || it.id == submissionId }
         if (found != null) {
             _interactionState.update { it.copy(inspectedReview = found) }
         } else {
-            _events.tryEmit(ExamEvent.ShowMessage("Detailed answer breakdown is only visible to the submitting account."))
+            _events.tryEmit(ExamEvent.ShowMessage("Detailed answer review is only stored on the submitting device."))
         }
     }
 
@@ -571,7 +580,7 @@ class ExamViewModel(
         _interactionState.update { it.copy(inspectedReview = null) }
     }
 
-    fun canManage(ownerId: String): Boolean = isAdminUser || ownerId == currentUserId
+    fun canManage(ownerId: String): Boolean = ownerId == currentUserId
 
     private fun <T> handleStreamError(collection: String, error: Throwable): Result<List<T>> {
         val firestoreError = generateSequence(error) { it.cause }
@@ -584,21 +593,19 @@ class ExamViewModel(
     }
 
     class Factory(
-        private val application: Application,
-        private val currentUserId: String,
-        private val uploaderName: String,
-        private val userEmail: String?
+        private val application: Application
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
             val databaseId = application.getString(R.string.firestore_database_id)
             val db = FirebaseFirestore.getInstance(databaseId)
+            val reviewStore = LocalExamReviewStore(application)
+            val participantId = reviewStore.getOrCreateParticipantId()
             return ExamViewModel(
                 repository = ExamRepository(db),
                 aiService = ExamAiService(),
-                currentUserId = currentUserId,
-                uploaderName = uploaderName,
-                userEmail = userEmail
+                reviewStore = reviewStore,
+                currentUserId = participantId
             ) as T
         }
     }

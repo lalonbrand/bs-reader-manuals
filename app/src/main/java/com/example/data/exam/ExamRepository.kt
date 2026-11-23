@@ -4,7 +4,6 @@ import com.example.data.firebase.OperationType
 import com.example.data.firebase.awaitTask
 import com.example.data.firebase.handleFirestoreError
 import com.google.firebase.Timestamp
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -15,8 +14,7 @@ import kotlinx.coroutines.flow.map
 import java.util.UUID
 
 class ExamRepository(
-    private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val db: FirebaseFirestore
 ) {
 
     fun observePdfBatches(): Flow<List<ExamPdfBatch>> =
@@ -56,20 +54,8 @@ class ExamRepository(
                 )
             }
 
-    fun observeUserReviews(userId: String): Flow<List<ExamReview>> =
-        db.collection("users")
-            .document(userId)
-            .collection("examReviews")
-            .snapshots()
-            .map { snapshot ->
-                snapshot.toObjects(
-                    ExamReview::class.java,
-                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
-            }
-
     suspend fun uploadBatchAndQuestions(
-        userId: String,
+        participantId: String,
         uploaderName: String,
         title: String,
         fileName: String,
@@ -78,14 +64,13 @@ class ExamRepository(
     ): Result<String> {
         val batchId = "batch_${UUID.randomUUID().toString().replace("-", "").take(16)}"
         return try {
-            val uid = auth.currentUser?.uid ?: error("Please sign in with Google first.")
-            check(uid == userId) { "Signed-in user changed; please retry." }
+            require(participantId.isNotBlank()) { "Participant ID is missing." }
             require(questions.isNotEmpty()) { "At least one question is required." }
 
             val trimmedQuestions = questions.take(300)
             val batchDocRef = db.collection("examPdfBatches").document(batchId)
             val batchData = buildBatchWriteMap(
-                userId = uid,
+                userId = participantId,
                 uploaderName = uploaderName,
                 title = title,
                 fileName = fileName,
@@ -102,7 +87,7 @@ class ExamRepository(
                 writeBatch.set(
                     qRef,
                     buildQuestionWriteMap(
-                        userId = uid,
+                        userId = participantId,
                         batchId = batchId,
                         batchTitle = title,
                         orderIndex = index,
@@ -176,7 +161,7 @@ class ExamRepository(
     }
 
     suspend fun submitExamResult(
-        userId: String,
+        participantId: String,
         candidateName: String,
         phase: String,
         factoryName: String,
@@ -184,9 +169,7 @@ class ExamRepository(
     ): Result<String> {
         val submissionId = "sub_${UUID.randomUUID().toString().replace("-", "").take(18)}"
         return try {
-            val uid = auth.currentUser?.uid ?: error("Please sign in with Google before submitting.")
-            check(uid == userId) { "Signed-in user changed; please retry." }
-
+            require(participantId.isNotBlank()) { "Participant ID is missing." }
             val safeName = candidateName.trim().take(100)
             val safePhase = phase.trim().take(100)
             val safeFactory = factoryName.trim().take(150)
@@ -195,7 +178,7 @@ class ExamRepository(
             require(safeFactory.isNotEmpty()) { "Factory Name is required." }
 
             val submissionMap = mapOf(
-                "userId" to uid,
+                "userId" to participantId,
                 "candidateName" to safeName,
                 "phase" to safePhase,
                 "factoryName" to safeFactory,
@@ -214,24 +197,11 @@ class ExamRepository(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
 
-            val reviewMap = mapOf(
-                "submissionId" to submissionId,
-                "candidateName" to safeName,
-                "phase" to safePhase,
-                "factoryName" to safeFactory,
-                "obtainedMarks" to grading.obtainedMarks,
-                "totalMarks" to grading.totalMarks,
-                "items" to grading.items.map { it.toMap() },
-                "createdAt" to FieldValue.serverTimestamp()
-            )
+            db.collection("examSubmissions")
+                .document(submissionId)
+                .set(submissionMap)
+                .awaitTask()
 
-            val batch = db.batch()
-            batch.set(db.collection("examSubmissions").document(submissionId), submissionMap)
-            batch.set(
-                db.collection("users").document(uid).collection("examReviews").document(submissionId),
-                reviewMap
-            )
-            batch.commit().awaitTask()
             Result.success(submissionId)
         } catch (e: CancellationException) {
             throw e
