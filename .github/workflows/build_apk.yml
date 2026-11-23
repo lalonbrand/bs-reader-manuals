@@ -77,6 +77,18 @@ jobs:
           ls -lh debug.keystore
           test -s debug.keystore
 
+      - name: Verify Firebase google-services.json
+        run: |
+          set -euo pipefail
+          if [ ! -f app/google-services.json ]; then
+            echo "::error::app/google-services.json is missing from this repository. Commit app/google-services.json before building BS-Reader.apk so Firebase AI Translation and Exam Center work."
+            exit 1
+          fi
+          if grep -q "remixed-project-id" app/google-services.json; then
+            echo "::error::app/google-services.json still contains placeholder 'remixed-project-id'."
+            exit 1
+          fi
+
       - name: Build BS Reader Debug APK
         run: gradle :app:assembleDebug --no-daemon --console=plain --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 

@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.ai.PageTranslationService
+import com.example.data.firebase.ensureFirebaseInitialized
 import com.example.data.local.BookEntity
 import com.example.data.local.BookTranslationLoader
 import com.example.data.local.FolioDatabase
@@ -188,6 +189,11 @@ class ReaderViewModel(
             }
 
             try {
+                if (!ensureFirebaseInitialized(getApplication())) {
+                    throw IllegalStateException(
+                        "Firebase is not initialized in this APK build. Rebuild or download the latest APK with google-services.json included."
+                    )
+                }
                 val paragraphs = pageTranslationService.translatePageImage(pageFile)
                 if (paragraphs.isNotEmpty()) {
                     withContext(Dispatchers.IO) {

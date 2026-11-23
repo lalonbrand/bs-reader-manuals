@@ -22,6 +22,7 @@ import com.example.data.exam.LocalExamReviewStore
 import com.example.data.exam.QuestionType
 import com.example.data.exam.RankedSubmission
 import com.example.data.exam.computeCandidateRankings
+import com.example.data.firebase.ensureFirebaseInitialized
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
@@ -34,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -117,10 +119,11 @@ sealed interface ExamEvent {
 }
 
 class ExamViewModel(
-    private val repository: ExamRepository,
+    private val repository: ExamRepository?,
     private val aiService: ExamAiService,
     private val reviewStore: LocalExamReviewStore,
-    private val currentUserId: String
+    private val currentUserId: String,
+    private val initError: String? = null
 ) : ViewModel() {
 
     private val savedProfile = reviewStore.loadCandidateProfile()
@@ -138,40 +141,47 @@ class ExamViewModel(
         )
     )
 
-    private val batchesStream: Flow<Result<List<ExamPdfBatch>>> = repository.observePdfBatches()
-        .map { Result.success(it) }
-        .catch { e -> emit(handleStreamError("examPdfBatches", e)) }
+    private val batchesStream: Flow<Result<List<ExamPdfBatch>>> = repository?.observePdfBatches()
+        ?.map { Result.success(it) }
+        ?.catch { e -> emit(handleStreamError("examPdfBatches", e)) }
+        ?: flowOf(Result.failure(IllegalStateException(initError ?: "Cloud database unavailable.")))
 
-    private val questionsStream: Flow<Result<List<ExamQuestion>>> = repository.observeQuestions()
-        .map { Result.success(it) }
-        .catch { e -> emit(handleStreamError("examQuestions", e)) }
+    private val questionsStream: Flow<Result<List<ExamQuestion>>> = repository?.observeQuestions()
+        ?.map { Result.success(it) }
+        ?.catch { e -> emit(handleStreamError("examQuestions", e)) }
+        ?: flowOf(Result.failure(IllegalStateException(initError ?: "Cloud database unavailable.")))
 
-    private val submissionsStream: Flow<Result<List<ExamSubmission>>> = repository.observeSubmissions()
-        .map { Result.success(it) }
-        .catch { e -> emit(handleStreamError("examSubmissions", e)) }
+    private val submissionsStream: Flow<Result<List<ExamSubmission>>> = repository?.observeSubmissions()
+        ?.map { Result.success(it) }
+        ?.catch { e -> emit(handleStreamError("examSubmissions", e)) }
+        ?: flowOf(Result.failure(IllegalStateException(initError ?: "Cloud database unavailable.")))
 
-    private val firestoreDataState: Flow<ExamDataState> = combine(
-        batchesStream,
-        questionsStream,
-        submissionsStream,
-        _localReviews
-    ) { batchesRes, questionsRes, submissionsRes, reviews ->
-        val firstError = batchesRes.exceptionOrNull()
-            ?: questionsRes.exceptionOrNull()
-            ?: submissionsRes.exceptionOrNull()
+    private val firestoreDataState: Flow<ExamDataState> = if (initError != null || repository == null) {
+        flowOf(ExamDataState.Error(initError ?: "Cloud database is not initialized in this APK build."))
+    } else {
+        combine(
+            batchesStream,
+            questionsStream,
+            submissionsStream,
+            _localReviews
+        ) { batchesRes, questionsRes, submissionsRes, reviews ->
+            val firstError = batchesRes.exceptionOrNull()
+                ?: questionsRes.exceptionOrNull()
+                ?: submissionsRes.exceptionOrNull()
 
-        if (firstError != null) {
-            ExamDataState.Error(firstError.localizedMessage ?: "Failed to load exam data from cloud.")
-        } else {
-            val batches = batchesRes.getOrDefault(emptyList())
-            val questions = questionsRes.getOrDefault(emptyList())
-            val submissions = submissionsRes.getOrDefault(emptyList())
-            ExamDataState.Ready(
-                batches = batches,
-                questions = questions,
-                rankings = computeCandidateRankings(submissions),
-                userReviews = reviews
-            )
+            if (firstError != null) {
+                ExamDataState.Error(firstError.localizedMessage ?: "Failed to load exam data from cloud.")
+            } else {
+                val batches = batchesRes.getOrDefault(emptyList())
+                val questions = questionsRes.getOrDefault(emptyList())
+                val submissions = submissionsRes.getOrDefault(emptyList())
+                ExamDataState.Ready(
+                    batches = batches,
+                    questions = questions,
+                    rankings = computeCandidateRankings(submissions),
+                    userReviews = reviews
+                )
+            }
         }
     }
 
@@ -220,6 +230,11 @@ class ExamViewModel(
                 )
             }
             try {
+                if (!ensureFirebaseInitialized(appContext)) {
+                    throw IllegalStateException(
+                        "Firebase is not initialized in this APK build. Rebuild or download the latest APK with google-services.json included."
+                    )
+                }
                 val parsed = aiService.parseQaPdfUri(appContext.applicationContext, uri) { progress ->
                     _interactionState.update { it.copy(scanProgressText = progress) }
                 }
@@ -307,6 +322,10 @@ class ExamViewModel(
     }
 
     fun confirmUploadDraft() {
+        val repo = repository ?: run {
+            _events.tryEmit(ExamEvent.ShowMessage(initError ?: "Cloud database unavailable."))
+            return
+        }
         val draft = _interactionState.value.pendingDraft ?: return
         if (draft.isSaving || draft.questions.isEmpty()) return
 
@@ -316,7 +335,7 @@ class ExamViewModel(
             _interactionState.update { state ->
                 state.copy(pendingDraft = state.pendingDraft?.copy(isSaving = true))
             }
-            val result = repository.uploadBatchAndQuestions(
+            val result = repo.uploadBatchAndQuestions(
                 participantId = currentUserId,
                 uploaderName = resolvedUploader,
                 title = draft.title.ifBlank { draft.fileName },
@@ -349,18 +368,20 @@ class ExamViewModel(
     }
 
     fun toggleQuestionActive(question: ExamQuestion) {
+        val repo = repository ?: return
         if (!canManage(question.userId)) return
         viewModelScope.launch {
-            repository.setQuestionActive(question.id, !question.active).onFailure { error ->
+            repo.setQuestionActive(question.id, !question.active).onFailure { error ->
                 _events.emit(ExamEvent.ShowMessage(error.localizedMessage ?: "Unable to update question."))
             }
         }
     }
 
     fun deleteQuestion(question: ExamQuestion) {
+        val repo = repository ?: return
         if (!canManage(question.userId)) return
         viewModelScope.launch {
-            repository.deleteQuestion(question.id).fold(
+            repo.deleteQuestion(question.id).fold(
                 onSuccess = { _events.emit(ExamEvent.ShowMessage("Question removed.")) },
                 onFailure = { _events.emit(ExamEvent.ShowMessage(it.localizedMessage ?: "Delete failed.")) }
             )
@@ -368,11 +389,12 @@ class ExamViewModel(
     }
 
     fun deleteBatch(batch: ExamPdfBatch) {
+        val repo = repository ?: return
         if (!canManage(batch.userId)) return
         val ready = uiState.value.dataState as? ExamDataState.Ready ?: return
         val qIds = ready.questions.filter { it.batchId == batch.id }.map { it.id }
         viewModelScope.launch {
-            repository.deleteBatchWithQuestions(batch.id, qIds).fold(
+            repo.deleteBatchWithQuestions(batch.id, qIds).fold(
                 onSuccess = {
                     _interactionState.update { state ->
                         state.copy(
@@ -475,6 +497,10 @@ class ExamViewModel(
     }
 
     fun submitExam() {
+        val repo = repository ?: run {
+            _events.tryEmit(ExamEvent.ShowMessage(initError ?: "Cloud database unavailable."))
+            return
+        }
         val session = _interactionState.value.activeSession ?: return
         if (session.isSubmitting) return
 
@@ -490,7 +516,7 @@ class ExamViewModel(
                     textAnswers = session.textAnswers
                 )
 
-                val saveResult = repository.submitExamResult(
+                val saveResult = repo.submitExamResult(
                     participantId = currentUserId,
                     candidateName = session.candidateName,
                     phase = session.phase,
@@ -597,15 +623,39 @@ class ExamViewModel(
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
-            val databaseId = application.getString(R.string.firestore_database_id)
-            val db = FirebaseFirestore.getInstance(databaseId)
             val reviewStore = LocalExamReviewStore(application)
             val participantId = reviewStore.getOrCreateParticipantId()
+
+            val initialized = ensureFirebaseInitialized(application)
+            val dbResult = if (!initialized) {
+                Result.failure(
+                    IllegalStateException(
+                        "Firebase is not initialized in this APK build. Rebuild or download the latest APK with google-services.json included."
+                    )
+                )
+            } else {
+                runCatching {
+                    val databaseId = application.getString(R.string.firestore_database_id).trim()
+                    if (databaseId.isEmpty()) {
+                        FirebaseFirestore.getInstance()
+                    } else {
+                        FirebaseFirestore.getInstance(databaseId)
+                    }
+                }
+            }
+
+            val db = dbResult.getOrNull()
+            val errorMsg = dbResult.exceptionOrNull()?.let { err ->
+                Log.e(TAG, "Failed to obtain FirebaseFirestore instance", err)
+                err.localizedMessage ?: "Failed to initialize Exam cloud sync."
+            }
+
             return ExamViewModel(
-                repository = ExamRepository(db),
+                repository = db?.let { ExamRepository(it) },
                 aiService = ExamAiService(),
                 reviewStore = reviewStore,
-                currentUserId = participantId
+                currentUserId = participantId,
+                initError = errorMsg
             ) as T
         }
     }

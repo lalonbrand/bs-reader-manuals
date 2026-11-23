@@ -216,7 +216,7 @@ fun ExamCenterRoot(
                                         .glassPanel(shape = RoundedCornerShape(22.dp))
                                         .padding(20.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Text(
                                         text = "Cloud Sync Issue",
@@ -229,6 +229,12 @@ fun ExamCenterRoot(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = TextAlign.Center
                                     )
+                                    Button(
+                                        onClick = onNavigateBack,
+                                        shape = RoundedCornerShape(50)
+                                    ) {
+                                        Text("Back to Bookshelf")
+                                    }
                                 }
                             }
                         }

@@ -15,17 +15,41 @@ private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
 
+fun ensureFirebaseInitialized(context: Context): Boolean {
+    val appContext = context.applicationContext ?: context
+    return try {
+        if (FirebaseApp.getApps(appContext).isNotEmpty()) {
+            true
+        } else {
+            val initialized = FirebaseApp.initializeApp(appContext)
+            if (initialized == null) {
+                Log.e(
+                    TAG,
+                    "FirebaseApp.initializeApp returned null. Verify app/google-services.json was compiled into resources."
+                )
+                false
+            } else {
+                true
+            }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to initialize FirebaseApp", e)
+        false
+    }
+}
+
 fun configureAppCheck(context: Context, intent: Intent?) {
+    val appContext = context.applicationContext ?: context
     try {
-        if (FirebaseApp.getApps(context).isEmpty()) {
-            FirebaseApp.initializeApp(context)
+        if (!ensureFirebaseInitialized(appContext)) {
+            return
         }
 
         if (BuildConfig.DEBUG) {
             val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
             if (!debugToken.isNullOrEmpty()) {
                 val persistenceKey = FirebaseApp.getInstance().persistenceKey
-                val prefs = context.getSharedPreferences(
+                val prefs = appContext.getSharedPreferences(
                     "$DEBUG_STORE_PREFIX$persistenceKey",
                     Context.MODE_PRIVATE
                 )
@@ -43,13 +67,13 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             )
             Log.d(TAG, "DebugAppCheckProviderFactory installed.")
         } else {
-            val resId = context.resources.getIdentifier(
+            val resId = appContext.resources.getIdentifier(
                 RECAPTCHA_SITE_KEY_RES,
                 "string",
-                context.packageName
+                appContext.packageName
             )
             if (resId != 0) {
-                val siteKey = context.getString(resId)
+                val siteKey = appContext.getString(resId)
                 if (siteKey.isNotBlank()) {
                     FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
                         RecaptchaAppCheckProviderFactory.getInstance(siteKey)
