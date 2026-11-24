@@ -30,17 +30,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Factory
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +57,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -58,12 +65,15 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -254,17 +264,23 @@ fun ExamCenterRoot(
 
                                 ExamHubTab.RANKINGS -> RankingsTab(
                                     currentUserId = uiState.currentUserId,
+                                    isSuperAdmin = uiState.staffSession.isSuperAdmin,
                                     rankings = dataState.rankings,
-                                    onInspectOwnAttempt = viewModel::inspectOwnReview
+                                    onInspectOwnAttempt = viewModel::inspectOwnReview,
+                                    onDeleteSubmission = viewModel::deleteSubmission
                                 )
 
                                 ExamHubTab.QUESTION_BANK -> QuestionBankTab(
                                     uiState = uiState,
                                     ready = dataState,
-                                    canManage = viewModel::canManage,
+                                    onOpenSignIn = viewModel::openStaffSignInDialog,
+                                    onSignOut = viewModel::signOutStaff,
                                     onUploadPdfClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                                     onSelectBatchFilter = viewModel::selectBankBatchFilter,
                                     onDeleteBatch = viewModel::deleteBatch,
+                                    onToggleCoordinatorBlocked = viewModel::toggleCoordinatorBlocked,
+                                    onGrantSuperAdmin = viewModel::grantSuperAdmin,
+                                    onRevokeSuperAdmin = viewModel::revokeSuperAdmin,
                                     onToggleQuestion = viewModel::toggleQuestionActive,
                                     onDeleteQuestion = viewModel::deleteQuestion
                                 )
@@ -323,6 +339,17 @@ fun ExamCenterRoot(
         PastReviewBottomSheet(
             review = review,
             onDismiss = viewModel::dismissInspectedReview
+        )
+    }
+
+    if (uiState.showStaffSignInDialog) {
+        StaffSignInDialog(
+            isLoading = uiState.isSigningInStaff,
+            errorMessage = uiState.staffSignInError,
+            onDismiss = viewModel::dismissStaffSignInDialog,
+            onSignIn = { usernameOrEmail, password ->
+                viewModel.signInStaff(context.applicationContext, usernameOrEmail, password)
+            }
         )
     }
 }
@@ -607,9 +634,13 @@ private fun AttendExamTab(
 @Composable
 private fun RankingsTab(
     currentUserId: String,
+    isSuperAdmin: Boolean,
     rankings: List<RankedSubmission>,
-    onInspectOwnAttempt: (String) -> Unit
+    onInspectOwnAttempt: (String) -> Unit,
+    onDeleteSubmission: (String, String) -> Unit
 ) {
+    var pendingDelete by remember { mutableStateOf<RankedSubmission?>(null) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
@@ -739,9 +770,51 @@ private fun RankingsTab(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
+                    if (isSuperAdmin) {
+                        IconButton(
+                            onClick = { pendingDelete = entry },
+                            modifier = Modifier
+                                .testTag("delete_submission_${sub.id}")
+                                .minimumInteractiveComponentSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Remove submission",
+                                tint = ErrorCoral
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    pendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            title = { Text("Remove Submission?") },
+            text = {
+                Text("Remove ranking entry for ${target.submission.candidateName} (${formatScore(target.submission.percentage)}%)?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteSubmission(target.submission.id, target.submission.candidateName)
+                        pendingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorCoral)
+                ) {
+                    Text("Remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -749,13 +822,19 @@ private fun RankingsTab(
 private fun QuestionBankTab(
     uiState: ExamUiState,
     ready: ExamDataState.Ready,
-    canManage: (String) -> Boolean,
+    onOpenSignIn: () -> Unit,
+    onSignOut: () -> Unit,
     onUploadPdfClick: () -> Unit,
     onSelectBatchFilter: (String?) -> Unit,
     onDeleteBatch: (ExamPdfBatch) -> Unit,
+    onToggleCoordinatorBlocked: (ExamPdfBatch) -> Unit,
+    onGrantSuperAdmin: (String) -> Unit,
+    onRevokeSuperAdmin: (String) -> Unit,
     onToggleQuestion: (ExamQuestion) -> Unit,
     onDeleteQuestion: (ExamQuestion) -> Unit
 ) {
+    val session = uiState.staffSession
+    val isSuperAdmin = session.isSuperAdmin
     val displayedQuestions = remember(ready.questions, uiState.bankBatchFilterId) {
         val batchFilter = uiState.bankBatchFilterId
         if (batchFilter == null) ready.questions else ready.questions.filter { it.batchId == batchFilter }
@@ -766,48 +845,174 @@ private fun QuestionBankTab(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item(key = "upload_qa_pdf_card") {
+        item(key = "staff_access_card") {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .glassPanel(shape = RoundedCornerShape(24.dp), highlighted = true)
-                    .padding(18.dp),
+                    .glassPanel(shape = RoundedCornerShape(22.dp), highlighted = session.isSignedIn)
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = SoftCyan, modifier = Modifier.size(26.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = if (session.isSignedIn) Icons.Default.AdminPanelSettings else Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = when {
+                                session.isSuperAdmin -> SoftCyan
+                                session.isSignedIn && !session.isRevoked -> ElectricViolet
+                                session.isRevoked -> ErrorCoral
+                                else -> SoftCyan
+                            }
+                        )
+                        Column {
+                            Text(
+                                text = when {
+                                    session.isRootSuperAdmin -> "Root Super Admin Signed In"
+                                    session.isSuperAdmin -> "Super Admin Signed In"
+                                    session.isSignedIn && session.isRevoked -> "Coordinator Access Disabled"
+                                    session.isSignedIn -> "Coordinator Signed In (Upload Only)"
+                                    else -> "Staff Upload Access"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (session.isSignedIn) {
+                                    session.email
+                                } else {
+                                    "Only Super Admin or Coordinators can upload Q&A PDFs."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.78f)
+                            )
+                        }
+                    }
+
+                    if (session.isSignedIn) {
+                        OutlinedButton(
+                            onClick = onSignOut,
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.26f)),
+                            modifier = Modifier
+                                .testTag("staff_sign_out_button")
+                                .minimumInteractiveComponentSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Logout,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sign Out")
+                        }
+                    }
+                }
+
+                if (!session.isSignedIn) {
+                    Button(
+                        onClick = onOpenSignIn,
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("open_staff_signin_button")
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Staff Sign In (Username & Password)", fontWeight = FontWeight.SemiBold)
+                    }
+                } else if (session.isRevoked) {
                     Text(
-                        text = "Upload Q&A PDF",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Color.White
+                        text = "Your Coordinator upload permission was disabled by Super Admin.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorCoral
+                    )
+                } else if (!session.isSuperAdmin) {
+                    Text(
+                        text = "Coordinator permission: You can upload new Q&A PDF sets. Editing or deleting existing questions requires Super Admin.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SoftCyan
+                    )
+                } else {
+                    Text(
+                        text = "Super Admin permission: Upload Q&A PDFs, manage Super Admins, edit/hide/delete questions, remove rankings, or block coordinators.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SoftCyan
                     )
                 }
-                Text(
-                    text = "Select any PDF containing questions & answers. AI scans MCQs, Fill-in-the-blanks, and Written Descriptions. Upload additional PDFs anytime to append more questions.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.85f)
+            }
+        }
+
+        if (isSuperAdmin) {
+            item(key = "manage_super_admins_card") {
+                ManageSuperAdminsCard(
+                    currentSessionEmail = session.email,
+                    superAdmins = uiState.superAdmins,
+                    isUpdating = uiState.isUpdatingSuperAdmins,
+                    onGrantSuperAdmin = onGrantSuperAdmin,
+                    onRevokeSuperAdmin = onRevokeSuperAdmin
                 )
-                Button(
-                    onClick = onUploadPdfClick,
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color(0xFF12162E)
-                    ),
+            }
+        }
+
+        if (session.canUploadPdf) {
+            item(key = "upload_qa_pdf_card") {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("upload_qa_pdf_button")
+                        .glassPanel(shape = RoundedCornerShape(24.dp), highlighted = true)
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = SoftCyan, modifier = Modifier.size(26.dp))
+                        Text(
+                            text = "Upload Q&A PDF",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White
+                        )
+                    }
                     Text(
-                        text = if (ready.batches.isEmpty()) "Select Q&A PDF File" else "Upload More Q&A PDF",
-                        fontWeight = FontWeight.SemiBold
+                        text = "Select any PDF containing questions & answers. AI scans MCQs, Fill-in-the-blanks, and Written Descriptions. Upload additional PDFs anytime to append more questions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f)
                     )
+                    Button(
+                        onClick = onUploadPdfClick,
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color(0xFF12162E)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("upload_qa_pdf_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (ready.batches.isEmpty()) "Select Q&A PDF File" else "Upload More Q&A PDF",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
@@ -823,6 +1028,7 @@ private fun QuestionBankTab(
 
             items(ready.batches, key = { it.id }) { batch ->
                 val isFiltered = uiState.bankBatchFilterId == batch.id
+                val isCoordinatorBlocked = batch.userId in uiState.disabledCoordinatorUids
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -845,18 +1051,32 @@ private fun QuestionBankTab(
                             color = SoftCyan
                         )
                         Text(
-                            text = "${batch.fileName} • by ${batch.uploaderName}",
+                            text = "${batch.fileName} • by ${batch.uploaderName}" + if (isCoordinatorBlocked) " (Blocked)" else "",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isCoordinatorBlocked) ErrorCoral else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
-                    if (canManage(batch.userId)) {
-                        IconButton(
-                            onClick = { onDeleteBatch(batch) },
-                            modifier = Modifier.minimumInteractiveComponentSize()
-                        ) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Delete batch", tint = ErrorCoral)
+                    if (isSuperAdmin) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (batch.userId != session.uid && batch.userId.isNotBlank()) {
+                                IconButton(
+                                    onClick = { onToggleCoordinatorBlocked(batch) },
+                                    modifier = Modifier.minimumInteractiveComponentSize()
+                                ) {
+                                    Icon(
+                                        imageVector = if (isCoordinatorBlocked) Icons.Default.CheckCircle else Icons.Default.Block,
+                                        contentDescription = if (isCoordinatorBlocked) "Restore coordinator access" else "Block coordinator access",
+                                        tint = if (isCoordinatorBlocked) SoftCyan else Color(0xFFFFB74D)
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { onDeleteBatch(batch) },
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete batch", tint = ErrorCoral)
+                            }
                         }
                     }
                 }
@@ -889,7 +1109,7 @@ private fun QuestionBankTab(
             BankQuestionCard(
                 index = idx,
                 question = question,
-                canManage = canManage(question.userId),
+                canManage = isSuperAdmin,
                 onToggleActive = { onToggleQuestion(question) },
                 onDelete = { onDeleteQuestion(question) }
             )
@@ -1018,3 +1238,5 @@ private fun PastReviewBottomSheet(
         }
     }
 }
+
+

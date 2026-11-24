@@ -21,12 +21,20 @@ import com.example.data.exam.GradedAnswerItem
 import com.example.data.exam.LocalExamReviewStore
 import com.example.data.exam.QuestionType
 import com.example.data.exam.RankedSubmission
+import com.example.data.exam.SuperAdminEntry
 import com.example.data.exam.computeCandidateRankings
+import com.example.data.firebase.ExamStaffRole
+import com.example.data.firebase.ExamStaffSession
+import com.example.data.firebase.StaffAuthManager
+import com.example.data.firebase.StaffSignInOutcome
+import com.example.data.firebase.authStateFlow
 import com.example.data.firebase.ensureFirebaseInitialized
 import com.example.data.firebase.getFirebaseInitDiagnosticMessage
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -36,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -100,6 +109,13 @@ data class ExamResultView(
 
 data class ExamUiState(
     val currentUserId: String = "",
+    val staffSession: ExamStaffSession = ExamStaffSession(),
+    val disabledCoordinatorUids: Set<String> = emptySet(),
+    val superAdmins: List<SuperAdminEntry> = emptyList(),
+    val isUpdatingSuperAdmins: Boolean = false,
+    val showStaffSignInDialog: Boolean = false,
+    val isSigningInStaff: Boolean = false,
+    val staffSignInError: String? = null,
     val selectedTab: ExamHubTab = ExamHubTab.ATTEND,
     val dataState: ExamDataState = ExamDataState.Loading,
     val candidateName: String = "",
@@ -119,11 +135,13 @@ sealed interface ExamEvent {
     data class ShowMessage(val text: String) : ExamEvent
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ExamViewModel(
     private val repository: ExamRepository?,
     private val aiService: ExamAiService,
     private val reviewStore: LocalExamReviewStore,
     private val currentUserId: String,
+    private val firebaseAuth: FirebaseAuth? = null,
     private val initError: String? = null
 ) : ViewModel() {
 
@@ -186,11 +204,58 @@ class ExamViewModel(
         }
     }
 
+    private val staffSessionStream: Flow<ExamStaffSession> = (firebaseAuth?.authStateFlow() ?: flowOf(null))
+        .flatMapLatest { user ->
+            val baseSession = StaffAuthManager.sessionFromUser(user)
+            if (!baseSession.isSignedIn || repository == null) {
+                flowOf(baseSession)
+            } else if (baseSession.isRootSuperAdmin) {
+                flowOf(baseSession)
+            } else {
+                combine(
+                    repository.observeSelfSuperAdmin(baseSession.email).catch { emit(false) },
+                    repository.observeSelfRevoked(baseSession.uid).catch { emit(false) }
+                ) { isDelegatedSuperAdmin, revoked ->
+                    StaffAuthManager.sessionFromUser(
+                        user = user,
+                        isDelegatedSuperAdmin = isDelegatedSuperAdmin,
+                        isRevoked = revoked
+                    )
+                }
+            }
+        }
+
+    private val disabledCoordinatorsStream: Flow<Set<String>> = staffSessionStream
+        .flatMapLatest { session ->
+            if (session.isSuperAdmin && repository != null) {
+                repository.observeDisabledCoordinators().catch { emit(emptySet()) }
+            } else {
+                flowOf(emptySet())
+            }
+        }
+
+    private val superAdminsStream: Flow<List<SuperAdminEntry>> = staffSessionStream
+        .flatMapLatest { session ->
+            if (session.isSuperAdmin && repository != null) {
+                repository.observeSuperAdmins().catch { emit(emptyList()) }
+            } else {
+                flowOf(emptyList())
+            }
+        }
+
     val uiState: StateFlow<ExamUiState> = combine(
         _interactionState,
-        firestoreDataState
-    ) { local, remote ->
-        local.copy(dataState = remote)
+        firestoreDataState,
+        staffSessionStream,
+        disabledCoordinatorsStream,
+        superAdminsStream
+    ) { local, remote, session, disabledUids, superAdmins ->
+        local.copy(
+            dataState = remote,
+            staffSession = session,
+            disabledCoordinatorUids = disabledUids,
+            superAdmins = superAdmins
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000L),
@@ -221,8 +286,70 @@ class ExamViewModel(
         _interactionState.update { it.copy(bankBatchFilterId = batchId) }
     }
 
+    fun openStaffSignInDialog() {
+        _interactionState.update {
+            it.copy(showStaffSignInDialog = true, staffSignInError = null)
+        }
+    }
+
+    fun dismissStaffSignInDialog() {
+        if (_interactionState.value.isSigningInStaff) return
+        _interactionState.update {
+            it.copy(showStaffSignInDialog = false, staffSignInError = null)
+        }
+    }
+
+    fun signInStaff(appContext: Context, usernameOrEmail: String, password: String) {
+        if (_interactionState.value.isSigningInStaff) return
+        viewModelScope.launch {
+            _interactionState.update {
+                it.copy(isSigningInStaff = true, staffSignInError = null)
+            }
+            when (val outcome = StaffAuthManager.signInWithUsernamePassword(appContext, usernameOrEmail, password)) {
+                is StaffSignInOutcome.Success -> {
+                    _interactionState.update {
+                        it.copy(
+                            isSigningInStaff = false,
+                            showStaffSignInDialog = false,
+                            staffSignInError = null
+                        )
+                    }
+                    val message = if (outcome.session.isRootSuperAdmin) {
+                        "Signed in as Root Super Admin (${outcome.session.email})."
+                    } else {
+                        "Signed in as ${outcome.session.email}."
+                    }
+                    _events.emit(ExamEvent.ShowMessage(message))
+                }
+
+                is StaffSignInOutcome.Error -> {
+                    _interactionState.update {
+                        it.copy(
+                            isSigningInStaff = false,
+                            staffSignInError = outcome.message
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun signOutStaff() {
+        StaffAuthManager.signOut()
+        _events.tryEmit(ExamEvent.ShowMessage("Signed out of staff upload access."))
+    }
+
     fun scanQaPdf(appContext: Context, uri: Uri) {
         if (_interactionState.value.isScanningPdf) return
+        val session = uiState.value.staffSession
+        if (!session.isSignedIn) {
+            _events.tryEmit(ExamEvent.ShowMessage("Please sign in as Super Admin or Coordinator to upload Q&A PDFs."))
+            return
+        }
+        if (!session.canUploadPdf) {
+            _events.tryEmit(ExamEvent.ShowMessage("Your Coordinator upload access has been disabled by Super Admin."))
+            return
+        }
         viewModelScope.launch {
             _interactionState.update {
                 it.copy(
@@ -325,17 +452,24 @@ class ExamViewModel(
             _events.tryEmit(ExamEvent.ShowMessage(initError ?: "Cloud database unavailable."))
             return
         }
+        val session = uiState.value.staffSession
+        if (!session.canUploadPdf) {
+            _events.tryEmit(ExamEvent.ShowMessage("Staff upload permission required. Please sign in as Super Admin or Coordinator."))
+            return
+        }
         val draft = _interactionState.value.pendingDraft ?: return
         if (draft.isSaving || draft.questions.isEmpty()) return
 
-        val resolvedUploader = _interactionState.value.candidateName.trim().ifBlank { "Exam Coordinator" }
+        val handle = session.email.substringBefore('@').ifBlank { "staff" }
+        val roleTag = if (session.isSuperAdmin) "Super Admin" else "Coordinator"
+        val resolvedUploader = "$handle ($roleTag)"
 
         viewModelScope.launch {
             _interactionState.update { state ->
                 state.copy(pendingDraft = state.pendingDraft?.copy(isSaving = true))
             }
             val result = repo.uploadBatchAndQuestions(
-                participantId = currentUserId,
+                participantId = session.uid,
                 uploaderName = resolvedUploader,
                 title = draft.title.ifBlank { draft.fileName },
                 fileName = draft.fileName,
@@ -368,7 +502,10 @@ class ExamViewModel(
 
     fun toggleQuestionActive(question: ExamQuestion) {
         val repo = repository ?: return
-        if (!canManage(question.userId)) return
+        if (!canManage()) {
+            _events.tryEmit(ExamEvent.ShowMessage("Only Super Admin can modify question visibility."))
+            return
+        }
         viewModelScope.launch {
             repo.setQuestionActive(question.id, !question.active).onFailure { error ->
                 _events.emit(ExamEvent.ShowMessage(error.localizedMessage ?: "Unable to update question."))
@@ -378,7 +515,10 @@ class ExamViewModel(
 
     fun deleteQuestion(question: ExamQuestion) {
         val repo = repository ?: return
-        if (!canManage(question.userId)) return
+        if (!canManage()) {
+            _events.tryEmit(ExamEvent.ShowMessage("Only Super Admin can delete questions."))
+            return
+        }
         viewModelScope.launch {
             repo.deleteQuestion(question.id).fold(
                 onSuccess = { _events.emit(ExamEvent.ShowMessage("Question removed.")) },
@@ -389,7 +529,10 @@ class ExamViewModel(
 
     fun deleteBatch(batch: ExamPdfBatch) {
         val repo = repository ?: return
-        if (!canManage(batch.userId)) return
+        if (!canManage()) {
+            _events.tryEmit(ExamEvent.ShowMessage("Only Super Admin can delete PDF batches."))
+            return
+        }
         val ready = uiState.value.dataState as? ExamDataState.Ready ?: return
         val qIds = ready.questions.filter { it.batchId == batch.id }.map { it.id }
         viewModelScope.launch {
@@ -406,6 +549,118 @@ class ExamViewModel(
                 onFailure = {
                     _events.emit(ExamEvent.ShowMessage(it.localizedMessage ?: "Unable to delete PDF batch."))
                 }
+            )
+        }
+    }
+
+    fun toggleCoordinatorBlocked(batch: ExamPdfBatch) {
+        val repo = repository ?: return
+        val session = uiState.value.staffSession
+        if (!session.isSuperAdmin || batch.userId == session.uid || batch.userId.isBlank()) return
+        val currentlyBlocked = batch.userId in uiState.value.disabledCoordinatorUids
+        viewModelScope.launch {
+            repo.setCoordinatorBlocked(
+                targetUid = batch.userId,
+                displayName = batch.uploaderName,
+                adminUid = session.uid,
+                blocked = !currentlyBlocked
+            ).fold(
+                onSuccess = {
+                    val status = if (!currentlyBlocked) "blocked" else "restored"
+                    _events.emit(ExamEvent.ShowMessage("Coordinator \"${batch.uploaderName}\" upload access $status."))
+                },
+                onFailure = { err ->
+                    _events.emit(ExamEvent.ShowMessage(err.localizedMessage ?: "Unable to update coordinator access."))
+                }
+            )
+        }
+    }
+
+    fun grantSuperAdmin(usernameOrEmail: String) {
+        val repo = repository ?: return
+        val session = uiState.value.staffSession
+        if (!session.isSuperAdmin || _interactionState.value.isUpdatingSuperAdmins) {
+            if (!session.isSuperAdmin) {
+                _events.tryEmit(ExamEvent.ShowMessage("Only Super Admin can manage Super Admin access."))
+            }
+            return
+        }
+
+        val normalizedEmail = StaffAuthManager.normalizeUsernameOrEmail(usernameOrEmail)
+        if (!StaffAuthManager.isValidStaffEmail(normalizedEmail)) {
+            _events.tryEmit(ExamEvent.ShowMessage("Enter a valid username (e.g. coord1) or email (e.g. name@gmail.com)."))
+            return
+        }
+        if (StaffAuthManager.isRootSuperAdminEmail(normalizedEmail)) {
+            _events.tryEmit(ExamEvent.ShowMessage("${StaffAuthManager.SUPER_ADMIN_EMAIL} is already the permanent Root Super Admin."))
+            return
+        }
+        if (uiState.value.superAdmins.any { it.email.equals(normalizedEmail, ignoreCase = true) || it.id.equals(normalizedEmail, ignoreCase = true) }) {
+            _events.tryEmit(ExamEvent.ShowMessage("$normalizedEmail already has Super Admin access."))
+            return
+        }
+
+        viewModelScope.launch {
+            _interactionState.update { it.copy(isUpdatingSuperAdmins = true) }
+            repo.grantSuperAdmin(
+                targetEmail = normalizedEmail,
+                addedByEmail = session.email,
+                addedByUid = session.uid
+            ).fold(
+                onSuccess = {
+                    _interactionState.update { it.copy(isUpdatingSuperAdmins = false) }
+                    _events.emit(ExamEvent.ShowMessage("$normalizedEmail is now a Super Admin."))
+                },
+                onFailure = { err ->
+                    _interactionState.update { it.copy(isUpdatingSuperAdmins = false) }
+                    _events.emit(ExamEvent.ShowMessage(err.localizedMessage ?: "Failed to grant Super Admin role."))
+                }
+            )
+        }
+    }
+
+    fun revokeSuperAdmin(targetEmail: String) {
+        val repo = repository ?: return
+        val session = uiState.value.staffSession
+        if (!session.isSuperAdmin || _interactionState.value.isUpdatingSuperAdmins) {
+            if (!session.isSuperAdmin) {
+                _events.tryEmit(ExamEvent.ShowMessage("Only Super Admin can change Super Admin access."))
+            }
+            return
+        }
+
+        val cleanEmail = targetEmail.trim().lowercase()
+        if (cleanEmail.isEmpty()) return
+        if (StaffAuthManager.isRootSuperAdminEmail(cleanEmail)) {
+            _events.tryEmit(ExamEvent.ShowMessage("Cannot remove the permanent Root Super Admin (${StaffAuthManager.SUPER_ADMIN_EMAIL})."))
+            return
+        }
+
+        viewModelScope.launch {
+            _interactionState.update { it.copy(isUpdatingSuperAdmins = true) }
+            repo.revokeSuperAdmin(cleanEmail).fold(
+                onSuccess = {
+                    _interactionState.update { it.copy(isUpdatingSuperAdmins = false) }
+                    _events.emit(ExamEvent.ShowMessage("$cleanEmail changed back to Coordinator (Upload Only)."))
+                },
+                onFailure = { err ->
+                    _interactionState.update { it.copy(isUpdatingSuperAdmins = false) }
+                    _events.emit(ExamEvent.ShowMessage(err.localizedMessage ?: "Failed to update Super Admin role."))
+                }
+            )
+        }
+    }
+
+    fun deleteSubmission(submissionId: String, candidateName: String) {
+        val repo = repository ?: return
+        if (!canManage()) {
+            _events.tryEmit(ExamEvent.ShowMessage("Only Super Admin can delete submissions."))
+            return
+        }
+        viewModelScope.launch {
+            repo.deleteSubmission(submissionId).fold(
+                onSuccess = { _events.emit(ExamEvent.ShowMessage("Removed submission for $candidateName.")) },
+                onFailure = { _events.emit(ExamEvent.ShowMessage(it.localizedMessage ?: "Failed to remove submission.")) }
             )
         }
     }
@@ -605,7 +860,7 @@ class ExamViewModel(
         _interactionState.update { it.copy(inspectedReview = null) }
     }
 
-    fun canManage(ownerId: String): Boolean = ownerId == currentUserId
+    fun canManage(): Boolean = uiState.value.staffSession.isSuperAdmin
 
     private fun <T> handleStreamError(collection: String, error: Throwable): Result<List<T>> {
         val firestoreError = generateSequence(error) { it.cause }
@@ -641,6 +896,12 @@ class ExamViewModel(
                 }
             }
 
+            val firebaseAuth = if (initialized) {
+                runCatching { FirebaseAuth.getInstance() }.getOrNull()
+            } else {
+                null
+            }
+
             val db = dbResult.getOrNull()
             val errorMsg = dbResult.exceptionOrNull()?.let { err ->
                 Log.e(TAG, "Failed to obtain FirebaseFirestore instance", err)
@@ -652,6 +913,7 @@ class ExamViewModel(
                 aiService = ExamAiService(),
                 reviewStore = reviewStore,
                 currentUserId = participantId,
+                firebaseAuth = firebaseAuth,
                 initError = errorMsg
             ) as T
         }

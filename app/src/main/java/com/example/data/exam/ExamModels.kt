@@ -121,6 +121,16 @@ data class ExamReview(
     val createdAt: Timestamp? = null
 )
 
+@Keep
+@IgnoreExtraProperties
+data class SuperAdminEntry(
+    @DocumentId val id: String = "",
+    val email: String = "",
+    val addedByEmail: String = "",
+    val addedByUid: String = "",
+    val createdAt: Timestamp? = null
+)
+
 data class DraftExamQuestion(
     val tempId: String,
     val type: QuestionType,

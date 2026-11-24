@@ -301,6 +301,66 @@
         "items",
         "createdAt"
       ]
+    },
+    "DisabledCoordinator": {
+      "title": "DisabledCoordinator",
+      "description": "Coordinator UID whose Q&A PDF upload permission has been revoked by Super Admin.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the blocked coordinator."
+        },
+        "name": {
+          "type": "string",
+          "description": "Coordinator label shown in Super Admin batch list."
+        },
+        "blockedByUid": {
+          "type": "string",
+          "description": "Super Admin Firebase UID who applied the block."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when blocked (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "uid",
+        "name",
+        "blockedByUid",
+        "createdAt"
+      ]
+    },
+    "SuperAdminGrant": {
+      "title": "SuperAdminGrant",
+      "description": "Delegated Super Admin email record managed by Root or existing Super Admins.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Normalized lowercase staff email granted Super Admin access."
+        },
+        "addedByEmail": {
+          "type": "string",
+          "description": "Email of the Super Admin who granted access."
+        },
+        "addedByUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the Super Admin who granted access."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when granted (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "email",
+        "addedByEmail",
+        "addedByUid",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -319,6 +379,14 @@
     "/users/{userId}/examReviews/{submissionId}": {
       "schema": { "$ref": "#/entities/ExamReview" },
       "description": "Private per-question answer breakdown and AI feedback scoped to the submitting user."
+    },
+    "/disabledCoordinators/{uid}": {
+      "schema": { "$ref": "#/entities/DisabledCoordinator" },
+      "description": "Blocked Coordinator UIDs managed exclusively by Super Admin."
+    },
+    "/superAdmins/{email}": {
+      "schema": { "$ref": "#/entities/SuperAdminGrant" },
+      "description": "Delegated Super Admin email grants managed by Super Admins; mrlalon@bsreader.local remains permanent root fallback."
     }
   }
 }

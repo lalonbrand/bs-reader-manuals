@@ -210,4 +210,123 @@ class ExamRepository(
             Result.failure(e)
         }
     }
+
+    fun observeDisabledCoordinators(): Flow<Set<String>> =
+        db.collection("disabledCoordinators")
+            .snapshots()
+            .map { snapshot ->
+                snapshot.documents.map { it.id }.toSet()
+            }
+
+    fun observeSelfRevoked(uid: String): Flow<Boolean> =
+        db.collection("disabledCoordinators")
+            .document(uid)
+            .snapshots()
+            .map { snapshot -> snapshot.exists() }
+
+    suspend fun setCoordinatorBlocked(
+        targetUid: String,
+        displayName: String,
+        adminUid: String,
+        blocked: Boolean
+    ): Result<Unit> {
+        return try {
+            require(targetUid.isNotBlank()) { "Coordinator UID is missing." }
+            require(adminUid.isNotBlank()) { "Super Admin UID is missing." }
+            val ref = db.collection("disabledCoordinators").document(targetUid)
+            if (blocked) {
+                ref.set(
+                    mapOf(
+                        "uid" to targetUid,
+                        "name" to displayName.trim().ifBlank { "Coordinator" }.take(100),
+                        "blockedByUid" to adminUid,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).awaitTask()
+            } else {
+                ref.delete().awaitTask()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, if (blocked) OperationType.WRITE else OperationType.DELETE, "disabledCoordinators/$targetUid")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteSubmission(submissionId: String): Result<Unit> {
+        return try {
+            require(submissionId.isNotBlank())
+            db.collection("examSubmissions").document(submissionId).delete().awaitTask()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, "examSubmissions/$submissionId")
+            Result.failure(e)
+        }
+    }
+
+    fun observeSelfSuperAdmin(normalizedEmail: String): Flow<Boolean> =
+        db.collection("superAdmins")
+            .document(normalizedEmail)
+            .snapshots()
+            .map { snapshot -> snapshot.exists() }
+
+    fun observeSuperAdmins(): Flow<List<SuperAdminEntry>> =
+        db.collection("superAdmins")
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    SuperAdminEntry::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ).sortedBy { it.email.ifBlank { it.id } }
+            }
+
+    suspend fun grantSuperAdmin(
+        targetEmail: String,
+        addedByEmail: String,
+        addedByUid: String
+    ): Result<Unit> {
+        val cleanEmail = targetEmail.trim().lowercase()
+        return try {
+            require(cleanEmail.isNotBlank()) { "Super Admin email is required." }
+            require(addedByEmail.isNotBlank() && addedByUid.isNotBlank()) { "Current Super Admin session is missing." }
+            db.collection("superAdmins")
+                .document(cleanEmail)
+                .set(
+                    mapOf(
+                        "email" to cleanEmail,
+                        "addedByEmail" to addedByEmail.trim().lowercase(),
+                        "addedByUid" to addedByUid,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                .awaitTask()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, "superAdmins/$cleanEmail")
+            Result.failure(e)
+        }
+    }
+
+    suspend fun revokeSuperAdmin(targetEmail: String): Result<Unit> {
+        val cleanEmail = targetEmail.trim().lowercase()
+        return try {
+            require(cleanEmail.isNotBlank()) { "Super Admin email is required." }
+            db.collection("superAdmins")
+                .document(cleanEmail)
+                .delete()
+                .awaitTask()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, "superAdmins/$cleanEmail")
+            Result.failure(e)
+        }
+    }
 }

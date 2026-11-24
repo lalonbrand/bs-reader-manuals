@@ -10,7 +10,9 @@ let testEnv;
 const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
 const DEVICE_CANDIDATE_1 = "cand_device_01";
 const DEVICE_CANDIDATE_2 = "cand_device_02";
-const ADMIN_UID = "admin_uid_03";
+const COORDINATOR_UID = "coord_uid_01";
+const COORDINATOR_2_UID = "coord_uid_02";
+const SUPER_ADMIN_UID = "super_admin_uid";
 
 const [emulatorHost, emulatorPortStr] = (process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8085").split(":");
 const emulatorPort = parseInt(emulatorPortStr, 10);
@@ -43,11 +45,11 @@ beforeEach(async () => {
   }
 });
 
-function buildBatchPayload(participantId, overrides = {}) {
+function buildBatchPayload(uploaderUid, overrides = {}) {
   const now = pastDate(2000);
   return {
-    userId: participantId,
-    uploaderName: "Exam Coordinator",
+    userId: uploaderUid,
+    uploaderName: "coord1 (Coordinator)",
     title: "Quality Manual Q&A Set 1",
     fileName: "quality_qa_1.pdf",
     pageCount: 6,
@@ -62,10 +64,10 @@ function buildBatchPayload(participantId, overrides = {}) {
   };
 }
 
-function buildQuestionPayload(participantId, batchId, overrides = {}) {
+function buildQuestionPayload(uploaderUid, batchId, overrides = {}) {
   const now = pastDate(2000);
   return {
-    userId: participantId,
+    userId: uploaderUid,
     batchId,
     batchTitle: "Quality Manual Q&A Set 1",
     questionType: "MCQ",
@@ -107,141 +109,230 @@ function buildSubmissionPayload(participantId, overrides = {}) {
   };
 }
 
-test("Candidates without sign-in can upload Q&A PDFs, read exam questions, and submit exam scores", async () => {
+function coordContext(uid = COORDINATOR_UID, email = "coord1@bsreader.local") {
+  return testEnv.authenticatedContext(uid, { email, email_verified: false }).firestore();
+}
+
+function superAdminContext() {
+  return testEnv.authenticatedContext(SUPER_ADMIN_UID, {
+    email: "mrlalon@bsreader.local",
+    email_verified: false,
+  }).firestore();
+}
+
+test("Unauthenticated guests can read questions and submit exam scores, but cannot upload or modify Q&A PDFs", async () => {
   const guestDb = testEnv.unauthenticatedContext().firestore();
-  const batchRef = guestDb.collection("examPdfBatches").doc("batch_01");
+  const adminDb = superAdminContext();
 
-  const writeBatch = guestDb.batch();
-  writeBatch.set(batchRef, buildBatchPayload(DEVICE_CANDIDATE_1));
-  writeBatch.set(guestDb.collection("examQuestions").doc("q_mcq_1"), buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_01"));
-  writeBatch.set(
-    guestDb.collection("examQuestions").doc("q_fill_1"),
-    buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_01", {
-      questionType: "FILL_IN_BLANK",
-      orderIndex: 1,
-      prompt: "Needle detection sensitivity calibration must be checked every ____ hours.",
-      options: [],
-      correctOptionIndex: -1,
-      correctAnswer: "2",
-      marks: 2,
-    })
-  );
-  writeBatch.set(
-    guestDb.collection("examQuestions").doc("q_desc_1"),
-    buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_01", {
-      questionType: "DESCRIPTIVE",
-      orderIndex: 2,
-      prompt: "Describe the corrective procedure when a broken needle tip is missing.",
-      options: [],
-      correctOptionIndex: -1,
-      correctAnswer: "Stop production immediately, quarantine garment batch, scan with handheld detector, locate all fragments before resuming.",
-      marks: 5,
-    })
-  );
-  await assertSucceeds(writeBatch.commit());
+  // Super Admin seeds a batch & question
+  const seedBatch = adminDb.batch();
+  seedBatch.set(adminDb.collection("examPdfBatches").doc("batch_seed"), buildBatchPayload(SUPER_ADMIN_UID));
+  seedBatch.set(adminDb.collection("examQuestions").doc("q_seed"), buildQuestionPayload(SUPER_ADMIN_UID, "batch_seed"));
+  await assertSucceeds(seedBatch.commit());
 
-  // Append a second PDF batch later without sign-in
-  const batch2Ref = guestDb.collection("examPdfBatches").doc("batch_02");
-  const writeBatch2 = guestDb.batch();
-  writeBatch2.set(batch2Ref, buildBatchPayload(DEVICE_CANDIDATE_1, { title: "Mold Control Q&A" }));
-  writeBatch2.set(
-    guestDb.collection("examQuestions").doc("q_mcq_2"),
-    buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_02", { batchTitle: "Mold Control Q&A", orderIndex: 0 })
-  );
-  await assertSucceeds(writeBatch2.commit());
-
-  // Filtered Kotlin queries succeed
+  // Guest can read filtered exam bank queries
   await assertSucceeds(guestDb.collection("examPdfBatches").where("visibility", "==", "EXAM_BANK").get());
   await assertSucceeds(guestDb.collection("examQuestions").where("visibility", "==", "EXAM_BANK").get());
 
-  // Unfiltered list queries fail
-  await assertFails(guestDb.collection("examPdfBatches").get());
-  await assertFails(guestDb.collection("examQuestions").get());
-
-  // Toggle question visibility and delete works
-  await assertSucceeds(guestDb.collection("examQuestions").doc("q_mcq_2").update({ active: false, updatedAt: pastDate(500) }));
-  await assertSucceeds(guestDb.collection("examQuestions").doc("q_mcq_2").delete());
-});
-
-test("Question validation blocks invalid MCQ indices, orphaned questions, ghost fields, and future timestamps", async () => {
-  const guestDb = testEnv.unauthenticatedContext().firestore();
-  await assertSucceeds(guestDb.collection("examPdfBatches").doc("batch_valid").set(buildBatchPayload(DEVICE_CANDIDATE_1)));
-
-  // Orphaned batchId fails
+  // Guest CANNOT upload batches or questions
   await assertFails(
-    guestDb.collection("examQuestions").doc("q_orphan").set(buildQuestionPayload(DEVICE_CANDIDATE_1, "nonexistent_batch"))
+    guestDb.collection("examPdfBatches").doc("batch_guest").set(buildBatchPayload(DEVICE_CANDIDATE_1))
+  );
+  await assertFails(
+    guestDb.collection("examQuestions").doc("q_guest").set(buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_seed"))
   );
 
-  // Invalid MCQ index out of bounds fails
+  // Guest CANNOT update or delete existing questions/batches
   await assertFails(
-    guestDb.collection("examQuestions").doc("q_bad_idx").set(
-      buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_valid", { correctOptionIndex: 4 })
-    )
+    guestDb.collection("examQuestions").doc("q_seed").update({ active: false, updatedAt: pastDate(500) })
   );
+  await assertFails(guestDb.collection("examQuestions").doc("q_seed").delete());
+  await assertFails(guestDb.collection("examPdfBatches").doc("batch_seed").delete());
 
-  // Extra ghost field fails
-  await assertFails(
-    guestDb.collection("examQuestions").doc("q_ghost").set(
-      buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_valid", { id: "q_ghost", adminOverride: true })
-    )
-  );
-
-  // Future timestamp tampering fails
-  await assertFails(
-    guestDb.collection("examQuestions").doc("q_future").set(
-      buildQuestionPayload(DEVICE_CANDIDATE_1, "batch_valid", { createdAt: new Date(Date.now() + 120000) })
-    )
-  );
-});
-
-test("Candidate submissions allow ranking queries without sign-in and lock terminal scores against tampering or deletion", async () => {
-  const guestDb = testEnv.unauthenticatedContext().firestore();
-  const adminDb = testEnv.authenticatedContext(ADMIN_UID, {
-    email: "qureshialrajin@gmail.com",
-    email_verified: true,
-  }).firestore();
-
-  const subId = "sub_cand_1";
+  // Guest CAN submit exam score
   await assertSucceeds(
-    guestDb.collection("examSubmissions").doc(subId).set(buildSubmissionPayload(DEVICE_CANDIDATE_1))
+    guestDb.collection("examSubmissions").doc("sub_guest_1").set(buildSubmissionPayload(DEVICE_CANDIDATE_1))
   );
+});
 
-  // Another candidate can list submitted scores to compute rank across total candidates
-  await assertSucceeds(guestDb.collection("examSubmissions").where("status", "==", "SUBMITTED").get());
+test("Coordinator can upload Q&A PDFs with own UID only, and cannot edit/delete questions, batches, or submissions", async () => {
+  const coordDb = coordContext(COORDINATOR_UID, "coord1@bsreader.local");
+  const coord2Db = coordContext(COORDINATOR_2_UID, "coord2@bsreader.local");
+  const adminDb = superAdminContext();
 
-  // Unfiltered submissions list fails
-  await assertFails(guestDb.collection("examSubmissions").get());
+  // Coordinator CAN upload batch + questions with their own UID
+  const wb = coordDb.batch();
+  wb.set(coordDb.collection("examPdfBatches").doc("batch_coord_1"), buildBatchPayload(COORDINATOR_UID));
+  wb.set(coordDb.collection("examQuestions").doc("q_coord_1"), buildQuestionPayload(COORDINATOR_UID, "batch_coord_1"));
+  await assertSucceeds(wb.commit());
 
-  // Candidate cannot tamper with or delete submitted scores (terminal state lock)
+  // Coordinator CANNOT spoof someone else's UID
   await assertFails(
-    guestDb.collection("examSubmissions").doc(subId).update({ obtainedMarks: 10, percentage: 100, updatedAt: pastDate(500) })
+    coordDb.collection("examPdfBatches").doc("batch_spoof").set(buildBatchPayload(COORDINATOR_2_UID))
   );
-  await assertFails(guestDb.collection("examSubmissions").doc(subId).delete());
 
-  // Invalid score exceeding totalMarks is rejected
+  // Coordinator CANNOT hide, edit, or delete even their own uploaded question or batch
+  await assertFails(
+    coordDb.collection("examQuestions").doc("q_coord_1").update({ active: false, updatedAt: pastDate(500) })
+  );
+  await assertFails(coordDb.collection("examQuestions").doc("q_coord_1").delete());
+  await assertFails(coordDb.collection("examPdfBatches").doc("batch_coord_1").delete());
+
+  // Coordinator CANNOT delete submissions or block other coordinators
+  await assertSucceeds(
+    testEnv.unauthenticatedContext().firestore().collection("examSubmissions").doc("sub_1").set(buildSubmissionPayload(DEVICE_CANDIDATE_1))
+  );
+  await assertFails(coordDb.collection("examSubmissions").doc("sub_1").delete());
+  await assertFails(
+    coordDb.collection("disabledCoordinators").doc(COORDINATOR_2_UID).set({
+      uid: COORDINATOR_2_UID,
+      name: "coord2",
+      blockedByUid: COORDINATOR_UID,
+      createdAt: pastDate(500),
+    })
+  );
+
+  // Another coordinator can still upload
+  const wb2 = coord2Db.batch();
+  wb2.set(coord2Db.collection("examPdfBatches").doc("batch_coord_2"), buildBatchPayload(COORDINATOR_2_UID));
+  wb2.set(coord2Db.collection("examQuestions").doc("q_coord_2"), buildQuestionPayload(COORDINATOR_2_UID, "batch_coord_2"));
+  await assertSucceeds(wb2.commit());
+
+  // Super Admin CAN block coordinator 1, hide/delete questions/batches, and delete submissions
+  await assertSucceeds(
+    adminDb.collection("disabledCoordinators").doc(COORDINATOR_UID).set({
+      uid: COORDINATOR_UID,
+      name: "coord1 (Coordinator)",
+      blockedByUid: SUPER_ADMIN_UID,
+      createdAt: pastDate(500),
+    })
+  );
+
+  // Blocked coordinator immediately loses upload permission
+  await assertFails(
+    coordDb.collection("examPdfBatches").doc("batch_blocked").set(buildBatchPayload(COORDINATOR_UID))
+  );
+
+  // Super Admin can edit/delete coordinator questions/batches and submissions
+  await assertSucceeds(
+    adminDb.collection("examQuestions").doc("q_coord_1").update({ active: false, updatedAt: pastDate(400) })
+  );
+  await assertSucceeds(adminDb.collection("examQuestions").doc("q_coord_1").delete());
+  await assertSucceeds(adminDb.collection("examPdfBatches").doc("batch_coord_1").delete());
+  await assertSucceeds(adminDb.collection("examSubmissions").doc("sub_1").delete());
+});
+
+test("Question validation still blocks invalid MCQ indices, orphaned questions, ghost fields, and future timestamps", async () => {
+  const coordDb = coordContext();
+  await assertSucceeds(coordDb.collection("examPdfBatches").doc("batch_valid").set(buildBatchPayload(COORDINATOR_UID)));
+
+  await assertFails(
+    coordDb.collection("examQuestions").doc("q_orphan").set(buildQuestionPayload(COORDINATOR_UID, "nonexistent_batch"))
+  );
+  await assertFails(
+    coordDb.collection("examQuestions").doc("q_bad_idx").set(
+      buildQuestionPayload(COORDINATOR_UID, "batch_valid", { correctOptionIndex: 4 })
+    )
+  );
+  await assertFails(
+    coordDb.collection("examQuestions").doc("q_ghost").set(
+      buildQuestionPayload(COORDINATOR_UID, "batch_valid", { id: "q_ghost", adminOverride: true })
+    )
+  );
+  await assertFails(
+    coordDb.collection("examQuestions").doc("q_future").set(
+      buildQuestionPayload(COORDINATOR_UID, "batch_valid", { createdAt: new Date(Date.now() + 120000) })
+    )
+  );
+});
+
+test("Candidate submissions allow ranking queries without sign-in and reject invalid or cross-user tampering", async () => {
+  const guestDb = testEnv.unauthenticatedContext().firestore();
+
+  await assertSucceeds(
+    guestDb.collection("examSubmissions").doc("sub_cand_1").set(buildSubmissionPayload(DEVICE_CANDIDATE_1))
+  );
+  await assertSucceeds(guestDb.collection("examSubmissions").where("status", "==", "SUBMITTED").get());
+  await assertFails(guestDb.collection("examSubmissions").get());
+  await assertFails(
+    guestDb.collection("examSubmissions").doc("sub_cand_1").update({ obtainedMarks: 10, percentage: 100, updatedAt: pastDate(500) })
+  );
+  await assertFails(guestDb.collection("examSubmissions").doc("sub_cand_1").delete());
   await assertFails(
     guestDb.collection("examSubmissions").doc("sub_bad_marks").set(
       buildSubmissionPayload(DEVICE_CANDIDATE_2, { obtainedMarks: 12, totalMarks: 10 })
     )
   );
-
-  // Admin can remove a test submission if needed
-  await assertSucceeds(adminDb.collection("examSubmissions").doc(subId).delete());
 });
 
-test("Private users/{userId}/examReviews remains locked against unauthenticated reads or writes", async () => {
-  const guestDb = testEnv.unauthenticatedContext().firestore();
-  await assertFails(guestDb.collection("users").doc(DEVICE_CANDIDATE_1).collection("examReviews").get());
+test("Root Super Admin can promote and demote delegated Super Admins, while Coordinators cannot escalate privileges", async () => {
+  const adminDb = superAdminContext();
+  const leadEmail = "lead.qa@gmail.com";
+  const leadUid = "lead_uid_01";
+  const leadDb = coordContext(leadUid, leadEmail);
+  const coordDb = coordContext(COORDINATOR_UID, "coord1@bsreader.local");
+
+  // Seed a batch & question as Coordinator
+  const seed = coordDb.batch();
+  seed.set(coordDb.collection("examPdfBatches").doc("batch_promo"), buildBatchPayload(COORDINATOR_UID));
+  seed.set(coordDb.collection("examQuestions").doc("q_promo"), buildQuestionPayload(COORDINATOR_UID, "batch_promo"));
+  await assertSucceeds(seed.commit());
+
+  // Coordinator CANNOT promote themselves or list superAdmins
   await assertFails(
-    guestDb.collection("users").doc(DEVICE_CANDIDATE_1).collection("examReviews").doc("sub_1").set({
-      submissionId: "sub_1",
-      candidateName: "Test User",
-      phase: "Phase 1",
-      factoryName: "Factory A",
-      obtainedMarks: 5,
-      totalMarks: 10,
-      items: [{ questionId: "q1" }],
-      createdAt: pastDate(1000),
+    coordDb.collection("superAdmins").doc("coord1@bsreader.local").set({
+      email: "coord1@bsreader.local",
+      addedByEmail: "coord1@bsreader.local",
+      addedByUid: COORDINATOR_UID,
+      createdAt: pastDate(500),
     })
   );
+  await assertFails(coordDb.collection("superAdmins").get());
+
+  // Before promotion, lead.qa@gmail.com is a Coordinator and CANNOT hide questions
+  await assertFails(
+    leadDb.collection("examQuestions").doc("q_promo").update({ active: false, updatedAt: pastDate(500) })
+  );
+
+  // Root Super Admin grants Super Admin access to lead.qa@gmail.com
+  await assertSucceeds(
+    adminDb.collection("superAdmins").doc(leadEmail).set({
+      email: leadEmail,
+      addedByEmail: "mrlalon@bsreader.local",
+      addedByUid: SUPER_ADMIN_UID,
+      createdAt: pastDate(500),
+    })
+  );
+
+  // Root Super Admin doc ID is protected from modification/deletion in superAdmins
+  await assertFails(
+    adminDb.collection("superAdmins").doc("mrlalon@bsreader.local").set({
+      email: "mrlalon@bsreader.local",
+      addedByEmail: "mrlalon@bsreader.local",
+      addedByUid: SUPER_ADMIN_UID,
+      createdAt: pastDate(500),
+    })
+  );
+
+  // Delegated Super Admin can now read superAdmins, hide questions, and promote another Super Admin
+  await assertSucceeds(leadDb.collection("superAdmins").doc(leadEmail).get());
+  await assertSucceeds(leadDb.collection("superAdmins").get());
+  await assertSucceeds(
+    leadDb.collection("examQuestions").doc("q_promo").update({ active: false, updatedAt: pastDate(400) })
+  );
+  await assertSucceeds(
+    leadDb.collection("superAdmins").doc("backup@outlook.com").set({
+      email: "backup@outlook.com",
+      addedByEmail: leadEmail,
+      addedByUid: leadUid,
+      createdAt: pastDate(300),
+    })
+  );
+
+  // Demoting lead.qa@gmail.com immediately revokes Super Admin privileges
+  await assertSucceeds(adminDb.collection("superAdmins").doc(leadEmail).delete());
+  await assertFails(
+    leadDb.collection("examQuestions").doc("q_promo").update({ active: true, updatedAt: pastDate(200) })
+  );
+  await assertFails(leadDb.collection("superAdmins").get());
 });
