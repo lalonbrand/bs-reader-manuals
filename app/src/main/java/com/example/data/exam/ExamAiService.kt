@@ -11,11 +11,15 @@ import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
+import com.google.firebase.ai.type.ThinkingLevel
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
+import com.google.firebase.ai.type.thinkingConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -25,8 +29,10 @@ import kotlin.math.max
 import kotlin.math.round
 
 private const val TAG = "ExamAiService"
-private const val PAGES_PER_BATCH = 3
-private const val MAX_RENDER_SIDE_PX = 1400
+private const val PAGES_PER_BATCH = 2
+private const val MAX_RENDER_SIDE_PX = 1280
+private const val PRIMARY_ATTEMPT_TIMEOUT_MS = 25_000L
+private const val FALLBACK_ATTEMPT_TIMEOUT_MS = 32_000L
 
 data class ExamGradingSummary(
     val obtainedMarks: Double,
@@ -91,38 +97,48 @@ class ExamAiService {
     )
 
     private val primaryExtractorModel by lazy {
-        createExtractorModel("gemini-3.8-flash")
+        createExtractorModel("gemini-3.8-flash", lowThinking = true)
     }
 
     private val fallbackExtractorModel by lazy {
-        createExtractorModel("gemini-3.5-flash-lite")
+        createExtractorModel("gemini-3.5-flash-lite", lowThinking = false)
     }
 
     private val primaryGraderModel by lazy {
-        createGraderModel("gemini-3.8-flash")
+        createGraderModel("gemini-3.8-flash", lowThinking = true)
     }
 
     private val fallbackGraderModel by lazy {
-        createGraderModel("gemini-3.5-flash-lite")
+        createGraderModel("gemini-3.5-flash-lite", lowThinking = false)
     }
 
-    private fun createExtractorModel(modelName: String) =
+    private fun createExtractorModel(modelName: String, lowThinking: Boolean) =
         Firebase.ai.generativeModel(
             modelName = modelName,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = extractionSchema
                 temperature = 0.1f
+                if (lowThinking) {
+                    thinkingConfig = thinkingConfig {
+                        thinkingLevel = ThinkingLevel.LOW
+                    }
+                }
             }
         )
 
-    private fun createGraderModel(modelName: String) =
+    private fun createGraderModel(modelName: String, lowThinking: Boolean) =
         Firebase.ai.generativeModel(
             modelName = modelName,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = gradingSchema
                 temperature = 0.1f
+                if (lowThinking) {
+                    thinkingConfig = thinkingConfig {
+                        thinkingLevel = ThinkingLevel.LOW
+                    }
+                }
             }
         )
 
@@ -504,9 +520,8 @@ class ExamAiService {
         chunkPrompt: String
     ): com.google.firebase.ai.type.GenerateContentResponse {
         val attempts = listOf(
-            "gemini-3.8-flash" to primaryExtractorModel,
-            "gemini-3.5-flash-lite" to fallbackExtractorModel,
-            "gemini-3.5-flash-lite" to fallbackExtractorModel
+            Triple("gemini-3.8-flash", primaryExtractorModel, PRIMARY_ATTEMPT_TIMEOUT_MS),
+            Triple("gemini-3.5-flash-lite", fallbackExtractorModel, FALLBACK_ATTEMPT_TIMEOUT_MS)
         )
         return runWithFallback(attempts, "extractor") { model ->
             model.generateContent(
@@ -522,9 +537,8 @@ class ExamAiService {
         promptText: String
     ): com.google.firebase.ai.type.GenerateContentResponse {
         val attempts = listOf(
-            "gemini-3.8-flash" to primaryGraderModel,
-            "gemini-3.5-flash-lite" to fallbackGraderModel,
-            "gemini-3.5-flash-lite" to fallbackGraderModel
+            Triple("gemini-3.8-flash", primaryGraderModel, PRIMARY_ATTEMPT_TIMEOUT_MS),
+            Triple("gemini-3.5-flash-lite", fallbackGraderModel, FALLBACK_ATTEMPT_TIMEOUT_MS)
         )
         return runWithFallback(attempts, "grader") { model ->
             model.generateContent(promptText)
@@ -532,26 +546,35 @@ class ExamAiService {
     }
 
     private suspend fun runWithFallback(
-        attempts: List<Pair<String, com.google.firebase.ai.GenerativeModel>>,
+        attempts: List<Triple<String, com.google.firebase.ai.GenerativeModel, Long>>,
         role: String,
         block: suspend (com.google.firebase.ai.GenerativeModel) -> com.google.firebase.ai.type.GenerateContentResponse
     ): com.google.firebase.ai.type.GenerateContentResponse {
         var lastError: Exception? = null
         for ((index, entry) in attempts.withIndex()) {
-            val (modelName, model) = entry
+            val (modelName, model, attemptTimeoutMs) = entry
+            val hasNext = index < attempts.lastIndex
             try {
-                return block(model)
+                return withTimeout(attemptTimeoutMs) {
+                    block(model)
+                }
+            } catch (e: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                lastError = e
+                Log.w(TAG, "Exam $role model $modelName timed out after ${attemptTimeoutMs}ms")
+                if (!hasNext) {
+                    throw e
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 lastError = e
                 val isTransient = isTransientDemandError(e)
-                val hasNext = index < attempts.lastIndex
                 Log.w(TAG, "Exam $role model $modelName failed (transient=$isTransient): ${e.message}")
                 if (!isTransient || !hasNext) {
                     throw e
                 }
-                kotlinx.coroutines.delay(if (index == 0) 900L else 1800L)
+                kotlinx.coroutines.delay(600L)
             }
         }
         throw lastError ?: IllegalStateException("AI $role request failed.")

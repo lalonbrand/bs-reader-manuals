@@ -9,11 +9,15 @@ import com.example.data.local.TranslatedLine
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
+import com.google.firebase.ai.type.ThinkingLevel
 import com.google.firebase.ai.type.content
 import com.google.firebase.ai.type.generationConfig
+import com.google.firebase.ai.type.thinkingConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -21,7 +25,9 @@ import java.io.File
 import kotlin.math.max
 
 private const val TAG = "PageTranslationService"
-private const val MAX_IMAGE_SIDE_PX = 1600
+private const val MAX_IMAGE_SIDE_PX = 1280
+private const val PRIMARY_ATTEMPT_TIMEOUT_MS = 25_000L
+private const val FALLBACK_ATTEMPT_TIMEOUT_MS = 32_000L
 private const val TRANSLATION_TIMEOUT_MS = 60_000L
 
 class PageTranslationService {
@@ -59,20 +65,25 @@ class PageTranslationService {
     """.trimIndent()
 
     private val primaryTranslationModel by lazy {
-        createTranslationModel("gemini-3.8-flash")
+        createTranslationModel("gemini-3.8-flash", lowThinking = true)
     }
 
     private val fallbackTranslationModel by lazy {
-        createTranslationModel("gemini-3.5-flash-lite")
+        createTranslationModel("gemini-3.5-flash-lite", lowThinking = false)
     }
 
-    private fun createTranslationModel(modelName: String) =
+    private fun createTranslationModel(modelName: String, lowThinking: Boolean) =
         Firebase.ai.generativeModel(
             modelName = modelName,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = translationSchema
                 temperature = 0.15f
+                if (lowThinking) {
+                    thinkingConfig = thinkingConfig {
+                        thinkingLevel = ThinkingLevel.LOW
+                    }
+                }
             }
         )
 
@@ -118,31 +129,39 @@ class PageTranslationService {
         fileName: String
     ): com.google.firebase.ai.type.GenerateContentResponse {
         val attempts = listOf(
-            "gemini-3.8-flash" to primaryTranslationModel,
-            "gemini-3.5-flash-lite" to fallbackTranslationModel,
-            "gemini-3.5-flash-lite" to fallbackTranslationModel
+            Triple("gemini-3.8-flash", primaryTranslationModel, PRIMARY_ATTEMPT_TIMEOUT_MS),
+            Triple("gemini-3.5-flash-lite", fallbackTranslationModel, FALLBACK_ATTEMPT_TIMEOUT_MS)
         )
         var lastError: Exception? = null
         for ((index, entry) in attempts.withIndex()) {
-            val (modelName, model) = entry
+            val (modelName, model, attemptTimeoutMs) = entry
+            val hasNext = index < attempts.lastIndex
             try {
-                return model.generateContent(
-                    content {
-                        image(bitmap)
-                        text(systemPromptText)
-                    }
-                )
+                return withTimeout(attemptTimeoutMs) {
+                    model.generateContent(
+                        content {
+                            image(bitmap)
+                            text(systemPromptText)
+                        }
+                    )
+                }
+            } catch (e: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                lastError = e
+                Log.w(TAG, "Model $modelName timed out after ${attemptTimeoutMs}ms for $fileName")
+                if (!hasNext) {
+                    throw e
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 lastError = e
                 val isTransient = isTransientDemandError(e)
-                val hasNext = index < attempts.lastIndex
                 Log.w(TAG, "Model $modelName failed for $fileName (transient=$isTransient): ${e.message}")
                 if (!isTransient || !hasNext) {
                     throw e
                 }
-                kotlinx.coroutines.delay(if (index == 0) 900L else 1800L)
+                kotlinx.coroutines.delay(600L)
             }
         }
         throw lastError ?: IllegalStateException("Translation failed.")
