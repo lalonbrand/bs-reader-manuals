@@ -7,9 +7,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.ai.PageTranslationService
-import com.example.data.firebase.diagnoseAiFailure
-import com.example.data.firebase.ensureFirebaseInitialized
-import com.example.data.firebase.getFirebaseInitDiagnosticMessage
 import com.example.data.local.BookEntity
 import com.example.data.local.BookTranslationLoader
 import com.example.data.local.FolioDatabase
@@ -191,9 +188,6 @@ class ReaderViewModel(
             }
 
             try {
-                if (!ensureFirebaseInitialized(getApplication())) {
-                    throw IllegalStateException(getFirebaseInitDiagnosticMessage(getApplication()))
-                }
                 val paragraphs = pageTranslationService.translatePageImage(pageFile)
                 if (paragraphs.isNotEmpty()) {
                     withContext(Dispatchers.IO) {
@@ -219,12 +213,11 @@ class ReaderViewModel(
                 _uiState.update { it.copy(translatingPages = it.translatingPages - oneBasedPage) }
                 throw e
             } catch (e: Exception) {
-                val diagnosticMessage = diagnoseAiFailure(getApplication(), e)
                 _uiState.update {
                     it.copy(
                         translatingPages = it.translatingPages - oneBasedPage,
                         translationErrorsByPage = it.translationErrorsByPage + (
-                            oneBasedPage to diagnosticMessage
+                            oneBasedPage to (e.localizedMessage ?: "Failed to translate page $oneBasedPage.")
                             )
                     )
                 }

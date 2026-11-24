@@ -6,86 +6,73 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.util.Log
 import com.example.data.local.TranslatedLine
-import com.google.firebase.Firebase
-import com.google.firebase.ai.ai
-import com.google.firebase.ai.type.Schema
-import com.google.firebase.ai.type.ThinkingLevel
-import com.google.firebase.ai.type.content
-import com.google.firebase.ai.type.generationConfig
-import com.google.firebase.ai.type.thinkingConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import kotlin.math.max
 
 private const val TAG = "PageTranslationService"
 private const val MAX_IMAGE_SIDE_PX = 1280
-private const val PRIMARY_ATTEMPT_TIMEOUT_MS = 25_000L
-private const val FALLBACK_ATTEMPT_TIMEOUT_MS = 32_000L
 private const val TRANSLATION_TIMEOUT_MS = 60_000L
 
 class PageTranslationService {
 
-    private val translationSchema = Schema.obj(
-        properties = mapOf(
-            "paragraphs" to Schema.array(
-                description = "All headings, paragraphs, notes, and list items in top-to-bottom reading order",
-                items = Schema.obj(
-                    properties = mapOf(
-                        "en" to Schema.string(
-                            description = "Exact English heading, paragraph, or list item text from the page"
-                        ),
-                        "bn" to Schema.string(
-                            description = "Strictly faithful natural Bangladeshi Bangla translation without any added explanation"
-                        )
+    private val translationSchemaJson: JSONObject = JSONObject().apply {
+        put("type", "OBJECT")
+        put(
+            "properties",
+            JSONObject().put(
+                "paragraphs",
+                JSONObject().apply {
+                    put("type", "ARRAY")
+                    put("description", "Bangla paragraphs in top-to-bottom reading order without copying full English paragraphs")
+                    put(
+                        "items",
+                        JSONObject().apply {
+                            put("type", "OBJECT")
+                            put(
+                                "properties",
+                                JSONObject().apply {
+                                    put(
+                                        "heading",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("description", "Short English section number/heading only if present (max 8 words), otherwise empty string")
+                                    )
+                                    put(
+                                        "bn",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("description", "Complete natural Bangladeshi Bangla translation of this heading, paragraph, table row, or bullet item")
+                                    )
+                                }
+                            )
+                            put("required", JSONArray().put("bn"))
+                        }
                     )
-                )
+                }
             )
         )
-    )
+        put("required", JSONArray().put("paragraphs"))
+    }
 
     private val systemPromptText = """
         You are an experienced Bangladeshi technical translator for garment manufacturing and quality control manuals.
-        Inspect the attached manual page image carefully and extract every readable heading, paragraph, table row, warning, and bullet item in natural top-to-bottom reading order.
+        Inspect the attached manual page image carefully and translate every readable heading, paragraph, table row, warning, and bullet item in natural top-to-bottom reading order.
 
-        CRITICAL PARAGRAPH & FAITHFULNESS RULES:
-        1. Group body prose into COMPLETE paragraphs and headings — do NOT split a single paragraph into individual visual lines.
-        2. Translate strictly what is written on the page into natural, conversational Bangladeshi Bangla (বাংলাদেশের প্রচলিত বাংলা).
-        3. NO EXTRA EXPLANATIONS: Never add extra explanations, examples, parenthetical clarifications, background context, or commentary that are not printed on the page.
-        4. NO OMISSIONS: Keep all numbers, measurements, percentages, dates, section numbers, and technical values exact.
-        5. Keep standard garment industry abbreviations intact where natural: QC, QA, AQL, SPI, GSM, PPE, SOP, RPM.
-        6. Use clear garment-industry Bangla terms naturally (e.g., অপারেটর, সুপারভাইজার, ফেব্রিক/কাপড়, সুই/নিডল, ত্রুটি/ডিফেক্ট, কাজের নির্দেশনা, নিরাপত্তামূলক সতর্কতা).
-        7. If the page is blank, purely decorative artwork, or contains no readable English sentences/words, return {"paragraphs": []}.
+        SPEED & FAITHFULNESS RULES:
+        1. Output natural, conversational Bangladeshi Bangla ("bn") for complete paragraphs—do NOT split one paragraph into line-by-line fragments, and do NOT re-type full English body paragraphs (put only a short English section label/heading in "heading" when helpful, or "" for body text).
+        2. Translate strictly what is written on the page. Never add extra explanations, parenthetical clarifications, examples, or commentary not printed on the page.
+        3. Keep all numbers, measurements, percentages, dates, section numbers, and technical specifications exact.
+        4. Keep standard garment abbreviations natural where appropriate: QC, QA, AQL, SPI, GSM, PPE, SOP, RPM.
+        5. Use clear garment-industry Bangla terms (e.g., অপারেটর, সুপারভাইজার, ফেব্রিক/কাপড়, সুই/নিডল, ত্রুটি/ডিফেক্ট, কাজের নির্দেশনা, নিরাপত্তামূলক সতর্কতা).
+        6. If the page is blank, purely decorative artwork, or has no readable English text, return {"paragraphs": []}.
     """.trimIndent()
-
-    private val primaryTranslationModel by lazy {
-        createTranslationModel("gemini-3.8-flash", lowThinking = true)
-    }
-
-    private val fallbackTranslationModel by lazy {
-        createTranslationModel("gemini-3.5-flash-lite", lowThinking = false)
-    }
-
-    private fun createTranslationModel(modelName: String, lowThinking: Boolean) =
-        Firebase.ai.generativeModel(
-            modelName = modelName,
-            generationConfig = generationConfig {
-                responseMimeType = "application/json"
-                responseSchema = translationSchema
-                temperature = 0.15f
-                if (lowThinking) {
-                    thinkingConfig = thinkingConfig {
-                        thinkingLevel = ThinkingLevel.LOW
-                    }
-                }
-            }
-        )
 
     suspend fun translatePageImage(pageFile: File): List<TranslatedLine> = withContext(Dispatchers.IO) {
         if (!pageFile.exists() || !pageFile.isFile) {
@@ -96,9 +83,14 @@ class PageTranslationService {
             ?: error("Unable to decode page image for translation.")
 
         try {
-            val response = try {
+            val rawJson = try {
                 withTimeout(TRANSLATION_TIMEOUT_MS) {
-                    generateWithFallback(bitmap, pageFile.name)
+                    GeminiRestClient.generateStructuredJson(
+                        promptText = systemPromptText,
+                        images = listOf(bitmap),
+                        responseSchema = translationSchemaJson,
+                        temperature = 0.15
+                    )
                 }
             } catch (e: TimeoutCancellationException) {
                 Log.e(TAG, "Page translation timed out for ${pageFile.name}", e)
@@ -106,15 +98,12 @@ class PageTranslationService {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Firebase AI page translation failed for ${pageFile.name}", e)
+                Log.e(TAG, "Gemini page translation failed for ${pageFile.name}", e)
                 throw IllegalStateException(
                     e.localizedMessage ?: "Failed to translate this page. Please check internet connection and retry.",
                     e
                 )
             }
-
-            val rawJson = response.text
-                ?: throw IllegalStateException("AI returned an empty translation response.")
 
             parseParagraphsJson(rawJson)
         } finally {
@@ -124,77 +113,16 @@ class PageTranslationService {
         }
     }
 
-    private suspend fun generateWithFallback(
-        bitmap: Bitmap,
-        fileName: String
-    ): com.google.firebase.ai.type.GenerateContentResponse {
-        val attempts = listOf(
-            Triple("gemini-3.8-flash", primaryTranslationModel, PRIMARY_ATTEMPT_TIMEOUT_MS),
-            Triple("gemini-3.5-flash-lite", fallbackTranslationModel, FALLBACK_ATTEMPT_TIMEOUT_MS)
-        )
-        var lastError: Exception? = null
-        for ((index, entry) in attempts.withIndex()) {
-            val (modelName, model, attemptTimeoutMs) = entry
-            val hasNext = index < attempts.lastIndex
-            try {
-                return withTimeout(attemptTimeoutMs) {
-                    model.generateContent(
-                        content {
-                            image(bitmap)
-                            text(systemPromptText)
-                        }
-                    )
-                }
-            } catch (e: TimeoutCancellationException) {
-                currentCoroutineContext().ensureActive()
-                lastError = e
-                Log.w(TAG, "Model $modelName timed out after ${attemptTimeoutMs}ms for $fileName")
-                if (!hasNext) {
-                    throw e
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastError = e
-                val isTransient = isTransientDemandError(e)
-                Log.w(TAG, "Model $modelName failed for $fileName (transient=$isTransient): ${e.message}")
-                if (!isTransient || !hasNext) {
-                    throw e
-                }
-                kotlinx.coroutines.delay(600L)
-            }
-        }
-        throw lastError ?: IllegalStateException("Translation failed.")
-    }
-
-    private fun isTransientDemandError(error: Throwable): Boolean {
-        val fullMessage = generateSequence(error) { it.cause }
-            .mapNotNull { it.message }
-            .joinToString(" | ")
-            .lowercase()
-        return fullMessage.contains("high demand") ||
-            fullMessage.contains("overloaded") ||
-            fullMessage.contains("unavailable") ||
-            fullMessage.contains("503") ||
-            fullMessage.contains("429") ||
-            fullMessage.contains("resource exhausted") ||
-            fullMessage.contains("rate limit") ||
-            fullMessage.contains("too many requests") ||
-            fullMessage.contains("try again")
-    }
-
     private fun parseParagraphsJson(rawJson: String): List<TranslatedLine> {
         val root = JSONObject(rawJson)
         val arr = root.optJSONArray("paragraphs") ?: return emptyList()
         val result = mutableListOf<TranslatedLine>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
-            val en = obj.optString("en").trim()
+            val headingOrEn = obj.optString("heading").ifBlank { obj.optString("en") }.trim()
             val bn = obj.optString("bn").trim()
-            if (bn.any { it.isLetter() } || en.any { it.isLetter() }) {
-                if (bn.isNotEmpty()) {
-                    result.add(TranslatedLine(en = en.ifBlank { bn }, bn = bn))
-                }
+            if (bn.isNotEmpty() && (bn.any { it.isLetter() } || headingOrEn.any { it.isLetter() })) {
+                result.add(TranslatedLine(en = headingOrEn, bn = bn))
             }
         }
         return result

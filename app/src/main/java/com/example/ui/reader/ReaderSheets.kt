@@ -568,7 +568,11 @@ fun BilingualTranslationBottomSheet(
                             .testTag("copy_page_translation_button")
                             .clickable {
                                 val payload = filteredParagraphs.joinToString("\n\n") { para ->
-                                    if (banglaOnlyMode) para.bn else "${para.en}\n${para.bn}"
+                                    if (banglaOnlyMode || para.en.isBlank() || para.en == para.bn) {
+                                        para.bn
+                                    } else {
+                                        "${para.en}\n${para.bn}"
+                                    }
                                 }
                                 clipboardManager.setText(AnnotatedString(payload))
                                 copiedAllPage = true
@@ -876,9 +880,12 @@ fun BilingualTranslationBottomSheet(
                                     .glassPanel(shape = RoundedCornerShape(18.dp), highlighted = isCopied)
                                     .testTag("translation_paragraph_card_$idx")
                                     .clickable {
-                                        clipboardManager.setText(
-                                            AnnotatedString("${paragraph.en}\n\n${paragraph.bn}")
-                                        )
+                                        val clip = if (paragraph.en.isBlank() || paragraph.en == paragraph.bn) {
+                                            paragraph.bn
+                                        } else {
+                                            "${paragraph.en}\n\n${paragraph.bn}"
+                                        }
+                                        clipboardManager.setText(AnnotatedString(clip))
                                         copiedIndex = idx
                                     }
                             ) {
@@ -917,12 +924,14 @@ fun BilingualTranslationBottomSheet(
                                         }
                                     }
 
-                                    Text(
-                                        text = paragraph.en,
-                                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                                    if (paragraph.en.isNotBlank() && paragraph.en != paragraph.bn) {
+                                        Text(
+                                            text = paragraph.en,
+                                            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                                    }
                                     Text(
                                         text = paragraph.bn,
                                         style = MaterialTheme.typography.bodyLarge.copy(

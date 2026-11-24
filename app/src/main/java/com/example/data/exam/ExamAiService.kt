@@ -8,18 +8,10 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
-import com.google.firebase.Firebase
-import com.google.firebase.ai.ai
-import com.google.firebase.ai.type.Schema
-import com.google.firebase.ai.type.ThinkingLevel
-import com.google.firebase.ai.type.content
-import com.google.firebase.ai.type.generationConfig
-import com.google.firebase.ai.type.thinkingConfig
+import com.example.data.ai.GeminiRestClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -31,8 +23,6 @@ import kotlin.math.round
 private const val TAG = "ExamAiService"
 private const val PAGES_PER_BATCH = 2
 private const val MAX_RENDER_SIDE_PX = 1280
-private const val PRIMARY_ATTEMPT_TIMEOUT_MS = 25_000L
-private const val FALLBACK_ATTEMPT_TIMEOUT_MS = 32_000L
 
 data class ExamGradingSummary(
     val obtainedMarks: Double,
@@ -49,98 +39,127 @@ data class ExamGradingSummary(
 
 class ExamAiService {
 
-    private val extractionSchema = Schema.obj(
-        properties = mapOf(
-            "questions" to Schema.array(
-                description = "All extracted exam questions and answers from these PDF pages",
-                items = Schema.obj(
-                    properties = mapOf(
-                        "questionType" to Schema.enumeration(
-                            values = listOf("MCQ", "FILL_IN_BLANK", "DESCRIPTIVE"),
-                            description = "MCQ for multiple choice, FILL_IN_BLANK for fill-in-the-blanks, DESCRIPTIVE for written descriptive answers"
-                        ),
-                        "prompt" to Schema.string(
-                            description = "Clean question statement. For FILL_IN_BLANK use ____ where the blank appears."
-                        ),
-                        "options" to Schema.array(
-                            items = Schema.string(),
-                            description = "Option choices for MCQ without A/B/C prefix unless helpful; empty array for FILL_IN_BLANK and DESCRIPTIVE"
-                        ),
-                        "correctOptionIndex" to Schema.integer(
-                            description = "0-based index of the correct MCQ option, or -1 if not MCQ"
-                        ),
-                        "correctAnswer" to Schema.string(
-                            description = "Exact answer or complete reference descriptive answer from the Q&A PDF"
-                        ),
-                        "marks" to Schema.integer(
-                            description = "Marks allocated in the PDF, or 1 for MCQ/FILL_IN_BLANK and 5 for DESCRIPTIVE when unspecified"
-                        )
+    private val extractionSchemaJson: JSONObject = JSONObject().apply {
+        put("type", "OBJECT")
+        put(
+            "properties",
+            JSONObject().put(
+                "questions",
+                JSONObject().apply {
+                    put("type", "ARRAY")
+                    put("description", "All extracted exam questions and answers from these PDF pages")
+                    put(
+                        "items",
+                        JSONObject().apply {
+                            put("type", "OBJECT")
+                            put(
+                                "properties",
+                                JSONObject().apply {
+                                    put(
+                                        "questionType",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("enum", JSONArray().put("MCQ").put("FILL_IN_BLANK").put("DESCRIPTIVE"))
+                                            .put("description", "MCQ for multiple choice, FILL_IN_BLANK for fill-in-the-blanks, DESCRIPTIVE for written descriptive answers")
+                                    )
+                                    put(
+                                        "prompt",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("description", "Clean question statement. For FILL_IN_BLANK use ____ where the blank appears.")
+                                    )
+                                    put(
+                                        "options",
+                                        JSONObject()
+                                            .put("type", "ARRAY")
+                                            .put("items", JSONObject().put("type", "STRING"))
+                                            .put("description", "Option choices for MCQ without A/B/C prefix unless helpful; empty array for FILL_IN_BLANK and DESCRIPTIVE")
+                                    )
+                                    put(
+                                        "correctOptionIndex",
+                                        JSONObject()
+                                            .put("type", "INTEGER")
+                                            .put("description", "0-based index of the correct MCQ option, or -1 if not MCQ")
+                                    )
+                                    put(
+                                        "correctAnswer",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("description", "Exact answer or complete reference descriptive answer from the Q&A PDF")
+                                    )
+                                    put(
+                                        "marks",
+                                        JSONObject()
+                                            .put("type", "INTEGER")
+                                            .put("description", "Marks allocated in the PDF, or 1 for MCQ/FILL_IN_BLANK and 5 for DESCRIPTIVE when unspecified")
+                                    )
+                                }
+                            )
+                            put(
+                                "required",
+                                JSONArray()
+                                    .put("questionType")
+                                    .put("prompt")
+                                    .put("options")
+                                    .put("correctOptionIndex")
+                                    .put("correctAnswer")
+                                    .put("marks")
+                            )
+                        }
                     )
-                )
+                }
             )
         )
-    )
+        put("required", JSONArray().put("questions"))
+    }
 
-    private val gradingSchema = Schema.obj(
-        properties = mapOf(
-            "grades" to Schema.array(
-                description = "Evaluations for each graded candidate answer",
-                items = Schema.obj(
-                    properties = mapOf(
-                        "questionId" to Schema.string(description = "Matching questionId"),
-                        "awardedMarks" to Schema.double(description = "Awarded marks between 0.0 and maxMarks"),
-                        "feedback" to Schema.string(description = "Concise 1-2 sentence grading feedback explaining correctness or missing points")
+    private val gradingSchemaJson: JSONObject = JSONObject().apply {
+        put("type", "OBJECT")
+        put(
+            "properties",
+            JSONObject().put(
+                "grades",
+                JSONObject().apply {
+                    put("type", "ARRAY")
+                    put("description", "Evaluations for each graded candidate answer")
+                    put(
+                        "items",
+                        JSONObject().apply {
+                            put("type", "OBJECT")
+                            put(
+                                "properties",
+                                JSONObject().apply {
+                                    put(
+                                        "questionId",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("description", "Matching questionId")
+                                    )
+                                    put(
+                                        "awardedMarks",
+                                        JSONObject()
+                                            .put("type", "NUMBER")
+                                            .put("description", "Awarded marks between 0.0 and maxMarks")
+                                    )
+                                    put(
+                                        "feedback",
+                                        JSONObject()
+                                            .put("type", "STRING")
+                                            .put("description", "Concise 1-2 sentence grading feedback explaining correctness or missing points")
+                                    )
+                                }
+                            )
+                            put(
+                                "required",
+                                JSONArray().put("questionId").put("awardedMarks").put("feedback")
+                            )
+                        }
                     )
-                )
+                }
             )
         )
-    )
-
-    private val primaryExtractorModel by lazy {
-        createExtractorModel("gemini-3.8-flash", lowThinking = true)
+        put("required", JSONArray().put("grades"))
     }
-
-    private val fallbackExtractorModel by lazy {
-        createExtractorModel("gemini-3.5-flash-lite", lowThinking = false)
-    }
-
-    private val primaryGraderModel by lazy {
-        createGraderModel("gemini-3.8-flash", lowThinking = true)
-    }
-
-    private val fallbackGraderModel by lazy {
-        createGraderModel("gemini-3.5-flash-lite", lowThinking = false)
-    }
-
-    private fun createExtractorModel(modelName: String, lowThinking: Boolean) =
-        Firebase.ai.generativeModel(
-            modelName = modelName,
-            generationConfig = generationConfig {
-                responseMimeType = "application/json"
-                responseSchema = extractionSchema
-                temperature = 0.1f
-                if (lowThinking) {
-                    thinkingConfig = thinkingConfig {
-                        thinkingLevel = ThinkingLevel.LOW
-                    }
-                }
-            }
-        )
-
-    private fun createGraderModel(modelName: String, lowThinking: Boolean) =
-        Firebase.ai.generativeModel(
-            modelName = modelName,
-            generationConfig = generationConfig {
-                responseMimeType = "application/json"
-                responseSchema = gradingSchema
-                temperature = 0.1f
-                if (lowThinking) {
-                    thinkingConfig = thinkingConfig {
-                        thinkingLevel = ThinkingLevel.LOW
-                    }
-                }
-            }
-        )
 
     suspend fun parseQaPdfUri(
         context: Context,
@@ -201,12 +220,15 @@ class ExamAiService {
                             - If a question has an answer key later on the same pages, match them together.
                         """.trimIndent()
 
-                        val response = withTimeout(60_000L) {
-                            generateExtractorWithFallback(bitmaps, chunkPrompt)
+                        val rawJson = withTimeout(60_000L) {
+                            GeminiRestClient.generateStructuredJson(
+                                promptText = chunkPrompt,
+                                images = bitmaps,
+                                responseSchema = extractionSchemaJson,
+                                temperature = 0.1
+                            )
                         }
 
-                        val rawJson = response.text
-                            ?: throw IllegalStateException("AI returned an empty response while scanning pages ${startPage + 1}–$endPage.")
                         val parsedChunk = parseExtractionJson(rawJson)
                         for (item in parsedChunk) {
                             val normKey = item.prompt.lowercase().replace(Regex("\\s+"), " ").trim()
@@ -351,9 +373,14 @@ class ExamAiService {
                     $payloadItems
                 """.trimIndent()
 
-                val response = try {
+                val jsonStr = try {
                     withTimeout(60_000L) {
-                        generateGraderWithFallback(promptText)
+                        GeminiRestClient.generateStructuredJson(
+                            promptText = promptText,
+                            images = emptyList(),
+                            responseSchema = gradingSchemaJson,
+                            temperature = 0.1
+                        )
                     }
                 } catch (e: TimeoutCancellationException) {
                     Log.e(TAG, "AI grading timed out", e)
@@ -368,8 +395,6 @@ class ExamAiService {
                     )
                 }
 
-                val jsonStr = response.text
-                    ?: throw IllegalStateException("AI grader returned an empty evaluation.")
                 val root = JSONObject(jsonStr)
                 val gradesArr = root.optJSONArray("grades") ?: JSONArray()
                 for (i in 0 until gradesArr.length()) {
@@ -514,85 +539,4 @@ class ExamAiService {
     private fun roundToHalf(value: Double): Double = round(value * 2.0) / 2.0
 
     private fun roundToOneDecimal(value: Double): Double = round(value * 10.0) / 10.0
-
-    private suspend fun generateExtractorWithFallback(
-        bitmaps: List<Bitmap>,
-        chunkPrompt: String
-    ): com.google.firebase.ai.type.GenerateContentResponse {
-        val attempts = listOf(
-            Triple("gemini-3.8-flash", primaryExtractorModel, PRIMARY_ATTEMPT_TIMEOUT_MS),
-            Triple("gemini-3.5-flash-lite", fallbackExtractorModel, FALLBACK_ATTEMPT_TIMEOUT_MS)
-        )
-        return runWithFallback(attempts, "extractor") { model ->
-            model.generateContent(
-                content {
-                    bitmaps.forEach { bmp -> image(bmp) }
-                    text(chunkPrompt)
-                }
-            )
-        }
-    }
-
-    private suspend fun generateGraderWithFallback(
-        promptText: String
-    ): com.google.firebase.ai.type.GenerateContentResponse {
-        val attempts = listOf(
-            Triple("gemini-3.8-flash", primaryGraderModel, PRIMARY_ATTEMPT_TIMEOUT_MS),
-            Triple("gemini-3.5-flash-lite", fallbackGraderModel, FALLBACK_ATTEMPT_TIMEOUT_MS)
-        )
-        return runWithFallback(attempts, "grader") { model ->
-            model.generateContent(promptText)
-        }
-    }
-
-    private suspend fun runWithFallback(
-        attempts: List<Triple<String, com.google.firebase.ai.GenerativeModel, Long>>,
-        role: String,
-        block: suspend (com.google.firebase.ai.GenerativeModel) -> com.google.firebase.ai.type.GenerateContentResponse
-    ): com.google.firebase.ai.type.GenerateContentResponse {
-        var lastError: Exception? = null
-        for ((index, entry) in attempts.withIndex()) {
-            val (modelName, model, attemptTimeoutMs) = entry
-            val hasNext = index < attempts.lastIndex
-            try {
-                return withTimeout(attemptTimeoutMs) {
-                    block(model)
-                }
-            } catch (e: TimeoutCancellationException) {
-                currentCoroutineContext().ensureActive()
-                lastError = e
-                Log.w(TAG, "Exam $role model $modelName timed out after ${attemptTimeoutMs}ms")
-                if (!hasNext) {
-                    throw e
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastError = e
-                val isTransient = isTransientDemandError(e)
-                Log.w(TAG, "Exam $role model $modelName failed (transient=$isTransient): ${e.message}")
-                if (!isTransient || !hasNext) {
-                    throw e
-                }
-                kotlinx.coroutines.delay(600L)
-            }
-        }
-        throw lastError ?: IllegalStateException("AI $role request failed.")
-    }
-
-    private fun isTransientDemandError(error: Throwable): Boolean {
-        val fullMessage = generateSequence(error) { it.cause }
-            .mapNotNull { it.message }
-            .joinToString(" | ")
-            .lowercase()
-        return fullMessage.contains("high demand") ||
-            fullMessage.contains("overloaded") ||
-            fullMessage.contains("unavailable") ||
-            fullMessage.contains("503") ||
-            fullMessage.contains("429") ||
-            fullMessage.contains("resource exhausted") ||
-            fullMessage.contains("rate limit") ||
-            fullMessage.contains("too many requests") ||
-            fullMessage.contains("try again")
-    }
 }

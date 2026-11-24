@@ -89,9 +89,10 @@ jobs:
           ls -lh debug.keystore /tmp/release-upload.jks
           test -s /tmp/release-upload.jks
 
-      - name: Restore or verify Firebase config & App Check
+      - name: Restore or verify Firebase config & Gemini API Key
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -euo pipefail
           if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
@@ -100,7 +101,7 @@ jobs:
           fi
           if [ ! -f app/google-services.json ]; then
             echo "HAS_GOOGLE_SERVICES=false" >> "$GITHUB_ENV"
-            echo "::warning::app/google-services.json is missing in GitHub. Push app/google-services.json or add GOOGLE_SERVICES_JSON secret so Firebase AI Translation and Exam Center initialize."
+            echo "::warning::app/google-services.json is missing in GitHub. Push app/google-services.json or add GOOGLE_SERVICES_JSON secret so Exam Center initializes."
             echo "### Firebase Config: MISSING" >> "$GITHUB_STEP_SUMMARY"
             echo "Add \`GOOGLE_SERVICES_JSON\` in GitHub Repository Secrets (or push \`app/google-services.json\`) and re-run this workflow." >> "$GITHUB_STEP_SUMMARY"
           elif grep -q "remixed-project-id" app/google-services.json; then
@@ -113,13 +114,15 @@ jobs:
             echo "### Firebase Config: OK" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          if [ -f app/src/main/res/values/firebase_applet_config.xml ] && grep -q 'recaptcha_site_key' app/src/main/res/values/firebase_applet_config.xml; then
-            echo "HAS_RECAPTCHA_KEY=true" >> "$GITHUB_ENV"
-            echo "### App Check (reCAPTCHA): INCLUDED" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$GEMINI_API_KEY" ]; then
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
+            echo "HAS_GEMINI_API_KEY=true" >> "$GITHUB_ENV"
+            echo "Configured .env from GEMINI_API_KEY GitHub Secret."
+            echo "### Gemini API Key: OK" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "HAS_RECAPTCHA_KEY=false" >> "$GITHUB_ENV"
-            echo "::warning::recaptcha_site_key missing in app/src/main/res/values/firebase_applet_config.xml"
-            echo "### App Check (reCAPTCHA): MISSING" >> "$GITHUB_STEP_SUMMARY"
+            echo "HAS_GEMINI_API_KEY=false" >> "$GITHUB_ENV"
+            echo "::warning::GEMINI_API_KEY secret is missing in GitHub. Add GEMINI_API_KEY in Settings -> Secrets and variables -> Actions and re-run Build BS Reader APK."
+            echo "### Gemini API Key: MISSING" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Build BS Reader Release APK
@@ -132,7 +135,7 @@ jobs:
       - name: Prepare BS-Reader.apk
         run: |
           set -euo pipefail
-          rm -f /tmp/release-upload.jks
+          rm -f /tmp/release-upload.jks .env
           cp app/build/outputs/apk/release/app-release.apk BS-Reader.apk
           VERSION_NAME=$(grep -E 'versionName\s*=' app/build.gradle.kts | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
           echo "VERSION_NAME=${VERSION_NAME:-latest}" >> "$GITHUB_ENV"
@@ -160,12 +163,12 @@ jobs:
           else
             FIREBASE_STATUS="Firebase config (google-services.json): MISSING — add GOOGLE_SERVICES_JSON secret in GitHub Settings -> Secrets and variables -> Actions and re-run Build BS Reader APK."
           fi
-          if [ "${HAS_RECAPTCHA_KEY:-false}" = "true" ]; then
-            APPCHECK_STATUS="App Check (reCAPTCHA Release): ENABLED"
+          if [ "${HAS_GEMINI_API_KEY:-false}" = "true" ]; then
+            GEMINI_STATUS="Gemini API Key (GEMINI_API_KEY): INCLUDED"
           else
-            APPCHECK_STATUS="App Check (reCAPTCHA Release): MISSING recaptcha_site_key"
+            GEMINI_STATUS="Gemini API Key (GEMINI_API_KEY): MISSING — add GEMINI_API_KEY secret in GitHub Settings -> Secrets and variables -> Actions and re-run Build BS Reader APK."
           fi
-          RELEASE_BODY="Latest compiled Release APK for BS Reader v${VERSION_NAME} (Bestseller Manuals). Built from commit ${GITHUB_SHA::7}."$'\n\n'"${FIREBASE_STATUS}"$'\n'"${APPCHECK_STATUS}"
+          RELEASE_BODY="Latest compiled Release APK for BS Reader v${VERSION_NAME} (Bestseller Manuals). Built from commit ${GITHUB_SHA::7}."$'\n\n'"${FIREBASE_STATUS}"$'\n'"${GEMINI_STATUS}"
 
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest BS-Reader.apk --clobber

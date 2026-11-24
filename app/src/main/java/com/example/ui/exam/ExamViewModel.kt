@@ -28,7 +28,6 @@ import com.example.data.firebase.ExamStaffSession
 import com.example.data.firebase.StaffAuthManager
 import com.example.data.firebase.StaffSignInOutcome
 import com.example.data.firebase.authStateFlow
-import com.example.data.firebase.diagnoseAiFailure
 import com.example.data.firebase.ensureFirebaseInitialized
 import com.example.data.firebase.getFirebaseInitDiagnosticMessage
 import com.google.firebase.auth.FirebaseAuth
@@ -385,9 +384,8 @@ class ExamViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "PDF AI scan failed", e)
-                val message = diagnoseAiFailure(appContext, e)
                 _interactionState.update { it.copy(isScanningPdf = false, scanProgressText = "") }
-                _events.emit(ExamEvent.ShowMessage(message))
+                _events.emit(ExamEvent.ShowMessage(e.localizedMessage ?: "Failed to scan Q&A PDF."))
             }
         }
     }
@@ -830,12 +828,11 @@ class ExamViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Exam grading or submission error", e)
-                val message = diagnoseAiFailure(null, e)
                 _interactionState.update { state ->
                     state.copy(activeSession = state.activeSession?.copy(isSubmitting = false))
                 }
                 _events.emit(
-                    ExamEvent.ShowMessage(message)
+                    ExamEvent.ShowMessage(e.localizedMessage ?: "Error grading exam answers.")
                 )
             }
         }

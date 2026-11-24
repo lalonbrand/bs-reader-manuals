@@ -68,7 +68,7 @@ object BookTranslationLoader {
             val updatedBundle = BookTranslationBundle(
                 version = 1,
                 language = "bn",
-                translator = "firebase-ai-gemini-3.8-flash",
+                translator = "gemini-bangla-direct",
                 pages = existingMap.entries
                     .sortedBy { it.key }
                     .map { (pageNum, list) ->
