@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.ai.PageTranslationService
+import com.example.data.firebase.diagnoseAiFailure
 import com.example.data.firebase.ensureFirebaseInitialized
 import com.example.data.firebase.getFirebaseInitDiagnosticMessage
 import com.example.data.local.BookEntity
@@ -218,11 +219,12 @@ class ReaderViewModel(
                 _uiState.update { it.copy(translatingPages = it.translatingPages - oneBasedPage) }
                 throw e
             } catch (e: Exception) {
+                val diagnosticMessage = diagnoseAiFailure(getApplication(), e)
                 _uiState.update {
                     it.copy(
                         translatingPages = it.translatingPages - oneBasedPage,
                         translationErrorsByPage = it.translationErrorsByPage + (
-                            oneBasedPage to (e.localizedMessage ?: "Failed to translate page $oneBasedPage.")
+                            oneBasedPage to diagnosticMessage
                             )
                     )
                 }
