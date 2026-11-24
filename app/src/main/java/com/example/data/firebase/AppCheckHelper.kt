@@ -27,6 +27,15 @@ private var appCheckProviderSummary: String = "AppCheck not configured"
 @Volatile
 private var appCheckInitError: String? = null
 
+@Volatile
+private var initialPrefetchStarted: Boolean = false
+
+@Volatile
+private var initialTokenError: String? = null
+
+@Volatile
+private var initialTokenSucceeded: Boolean = false
+
 fun ensureFirebaseInitialized(context: Context): Boolean {
     val appContext = context.applicationContext ?: context
     return try {
@@ -112,12 +121,28 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             if (resId != 0) {
                 val siteKey = appContext.getString(resId)
                 if (siteKey.isNotBlank()) {
-                    FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                    val appCheck = FirebaseAppCheck.getInstance()
+                    appCheck.installAppCheckProviderFactory(
                         RecaptchaAppCheckProviderFactory.getInstance(siteKey)
                     )
                     appCheckInitError = null
                     appCheckProviderSummary = "reCAPTCHA Enterprise (${siteKey.take(8)}...)"
                     Log.d(TAG, "RecaptchaAppCheckProviderFactory installed.")
+
+                    if (!initialPrefetchStarted) {
+                        initialPrefetchStarted = true
+                        appCheck.getAppCheckToken(false)
+                            .addOnSuccessListener {
+                                initialTokenSucceeded = true
+                                initialTokenError = null
+                                Log.d(TAG, "Initial release App Check token succeeded.")
+                            }
+                            .addOnFailureListener { exc ->
+                                initialTokenSucceeded = false
+                                initialTokenError = formatExceptionChain(exc)
+                                Log.e(TAG, "Initial release App Check token failed: $initialTokenError", exc)
+                            }
+                    }
                 } else {
                     appCheckInitError = "recaptcha_site_key resource string is blank."
                     appCheckProviderSummary = "Missing recaptcha_site_key"
@@ -130,7 +155,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             }
         }
     } catch (e: Exception) {
-        appCheckInitError = e.localizedMessage ?: e.javaClass.simpleName
+        appCheckInitError = formatExceptionChain(e)
         appCheckProviderSummary = "Init failed: $appCheckInitError"
         Log.e(TAG, "Failed to initialize Firebase App Check", e)
     }
@@ -177,16 +202,38 @@ suspend fun diagnoseAiFailure(context: Context?, error: Throwable): String {
         probeAppCheckToken()
     }
 
+    val savedInitialErr = initialTokenError
     return when {
-        tokenCheck == null ->
-            "$rawMessage\n\n[$buildLabel • $appCheckProviderSummary] App Check token fetch timed out. Check mobile data/Wi-Fi and disable VPN or Private DNS."
-        tokenCheck.isFailure -> {
-            val probeErr = tokenCheck.exceptionOrNull()?.localizedMessage ?: "unknown token error"
-            "$rawMessage\n\n[$buildLabel • $appCheckProviderSummary] Token error: $probeErr"
+        tokenCheck == null -> {
+            val detail = savedInitialErr?.let { "Initial error: $it" }
+                ?: "App Check token fetch timed out. Check mobile data/Wi-Fi and disable VPN or Private DNS."
+            "$rawMessage\n\n[$buildLabel • $appCheckProviderSummary] $detail"
         }
-        else ->
-            "$rawMessage\n\n[$buildLabel • $appCheckProviderSummary] Ensure phone Date & Time is set to Automatic and Google Play Services is updated."
+        tokenCheck.isFailure -> {
+            val probeErr = tokenCheck.exceptionOrNull()?.let { formatExceptionChain(it) } ?: "unknown token error"
+            val combined = if (!savedInitialErr.isNullOrBlank() && savedInitialErr != probeErr) {
+                "First error: $savedInitialErr | Latest: $probeErr"
+            } else {
+                "Token error: $probeErr"
+            }
+            "$rawMessage\n\n[$buildLabel • $appCheckProviderSummary] $combined"
+        }
+        else -> {
+            val status = if (initialTokenSucceeded) "Token OK" else "Token returned"
+            "$rawMessage\n\n[$buildLabel • $appCheckProviderSummary • $status] Ensure phone Date & Time is set to Automatic and Google Play Services is updated."
+        }
     }
+}
+
+private fun formatExceptionChain(error: Throwable): String {
+    return generateSequence(error) { it.cause }
+        .map { err ->
+            val msg = err.localizedMessage?.trim().orEmpty()
+            if (msg.isNotEmpty()) "${err.javaClass.simpleName}: $msg" else err.javaClass.simpleName
+        }
+        .distinct()
+        .joinToString(" -> ")
+        .ifBlank { error.javaClass.simpleName }
 }
 
 private suspend fun probeAppCheckToken(): Result<String> = suspendCancellableCoroutine { cont ->
