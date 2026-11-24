@@ -58,16 +58,23 @@ class PageTranslationService {
         7. If the page is blank, purely decorative artwork, or contains no readable English sentences/words, return {"paragraphs": []}.
     """.trimIndent()
 
-    private val translationModel by lazy {
+    private val primaryTranslationModel by lazy {
+        createTranslationModel("gemini-3.8-flash")
+    }
+
+    private val fallbackTranslationModel by lazy {
+        createTranslationModel("gemini-3.5-flash-lite")
+    }
+
+    private fun createTranslationModel(modelName: String) =
         Firebase.ai.generativeModel(
-            modelName = "gemini-3.8-flash",
+            modelName = modelName,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = translationSchema
                 temperature = 0.15f
             }
         )
-    }
 
     suspend fun translatePageImage(pageFile: File): List<TranslatedLine> = withContext(Dispatchers.IO) {
         if (!pageFile.exists() || !pageFile.isFile) {
@@ -80,12 +87,7 @@ class PageTranslationService {
         try {
             val response = try {
                 withTimeout(TRANSLATION_TIMEOUT_MS) {
-                    translationModel.generateContent(
-                        content {
-                            image(bitmap)
-                            text(systemPromptText)
-                        }
-                    )
+                    generateWithFallback(bitmap, pageFile.name)
                 }
             } catch (e: TimeoutCancellationException) {
                 Log.e(TAG, "Page translation timed out for ${pageFile.name}", e)
@@ -109,6 +111,57 @@ class PageTranslationService {
                 bitmap.recycle()
             }
         }
+    }
+
+    private suspend fun generateWithFallback(
+        bitmap: Bitmap,
+        fileName: String
+    ): com.google.firebase.ai.type.GenerateContentResponse {
+        val attempts = listOf(
+            "gemini-3.8-flash" to primaryTranslationModel,
+            "gemini-3.5-flash-lite" to fallbackTranslationModel,
+            "gemini-3.5-flash-lite" to fallbackTranslationModel
+        )
+        var lastError: Exception? = null
+        for ((index, entry) in attempts.withIndex()) {
+            val (modelName, model) = entry
+            try {
+                return model.generateContent(
+                    content {
+                        image(bitmap)
+                        text(systemPromptText)
+                    }
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                val isTransient = isTransientDemandError(e)
+                val hasNext = index < attempts.lastIndex
+                Log.w(TAG, "Model $modelName failed for $fileName (transient=$isTransient): ${e.message}")
+                if (!isTransient || !hasNext) {
+                    throw e
+                }
+                kotlinx.coroutines.delay(if (index == 0) 900L else 1800L)
+            }
+        }
+        throw lastError ?: IllegalStateException("Translation failed.")
+    }
+
+    private fun isTransientDemandError(error: Throwable): Boolean {
+        val fullMessage = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+            .lowercase()
+        return fullMessage.contains("high demand") ||
+            fullMessage.contains("overloaded") ||
+            fullMessage.contains("unavailable") ||
+            fullMessage.contains("503") ||
+            fullMessage.contains("429") ||
+            fullMessage.contains("resource exhausted") ||
+            fullMessage.contains("rate limit") ||
+            fullMessage.contains("too many requests") ||
+            fullMessage.contains("try again")
     }
 
     private fun parseParagraphsJson(rawJson: String): List<TranslatedLine> {

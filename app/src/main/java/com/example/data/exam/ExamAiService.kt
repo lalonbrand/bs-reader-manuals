@@ -90,27 +90,41 @@ class ExamAiService {
         )
     )
 
-    private val extractorModel by lazy {
+    private val primaryExtractorModel by lazy {
+        createExtractorModel("gemini-3.8-flash")
+    }
+
+    private val fallbackExtractorModel by lazy {
+        createExtractorModel("gemini-3.5-flash-lite")
+    }
+
+    private val primaryGraderModel by lazy {
+        createGraderModel("gemini-3.8-flash")
+    }
+
+    private val fallbackGraderModel by lazy {
+        createGraderModel("gemini-3.5-flash-lite")
+    }
+
+    private fun createExtractorModel(modelName: String) =
         Firebase.ai.generativeModel(
-            modelName = "gemini-3.8-flash",
+            modelName = modelName,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = extractionSchema
                 temperature = 0.1f
             }
         )
-    }
 
-    private val graderModel by lazy {
+    private fun createGraderModel(modelName: String) =
         Firebase.ai.generativeModel(
-            modelName = "gemini-3.8-flash",
+            modelName = modelName,
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = gradingSchema
                 temperature = 0.1f
             }
         )
-    }
 
     suspend fun parseQaPdfUri(
         context: Context,
@@ -172,12 +186,7 @@ class ExamAiService {
                         """.trimIndent()
 
                         val response = withTimeout(60_000L) {
-                            extractorModel.generateContent(
-                                content {
-                                    bitmaps.forEach { bmp -> image(bmp) }
-                                    text(chunkPrompt)
-                                }
-                            )
+                            generateExtractorWithFallback(bitmaps, chunkPrompt)
                         }
 
                         val rawJson = response.text
@@ -328,7 +337,7 @@ class ExamAiService {
 
                 val response = try {
                     withTimeout(60_000L) {
-                        graderModel.generateContent(promptText)
+                        generateGraderWithFallback(promptText)
                     }
                 } catch (e: TimeoutCancellationException) {
                     Log.e(TAG, "AI grading timed out", e)
@@ -489,4 +498,78 @@ class ExamAiService {
     private fun roundToHalf(value: Double): Double = round(value * 2.0) / 2.0
 
     private fun roundToOneDecimal(value: Double): Double = round(value * 10.0) / 10.0
+
+    private suspend fun generateExtractorWithFallback(
+        bitmaps: List<Bitmap>,
+        chunkPrompt: String
+    ): com.google.firebase.ai.type.GenerateContentResponse {
+        val attempts = listOf(
+            "gemini-3.8-flash" to primaryExtractorModel,
+            "gemini-3.5-flash-lite" to fallbackExtractorModel,
+            "gemini-3.5-flash-lite" to fallbackExtractorModel
+        )
+        return runWithFallback(attempts, "extractor") { model ->
+            model.generateContent(
+                content {
+                    bitmaps.forEach { bmp -> image(bmp) }
+                    text(chunkPrompt)
+                }
+            )
+        }
+    }
+
+    private suspend fun generateGraderWithFallback(
+        promptText: String
+    ): com.google.firebase.ai.type.GenerateContentResponse {
+        val attempts = listOf(
+            "gemini-3.8-flash" to primaryGraderModel,
+            "gemini-3.5-flash-lite" to fallbackGraderModel,
+            "gemini-3.5-flash-lite" to fallbackGraderModel
+        )
+        return runWithFallback(attempts, "grader") { model ->
+            model.generateContent(promptText)
+        }
+    }
+
+    private suspend fun runWithFallback(
+        attempts: List<Pair<String, com.google.firebase.ai.GenerativeModel>>,
+        role: String,
+        block: suspend (com.google.firebase.ai.GenerativeModel) -> com.google.firebase.ai.type.GenerateContentResponse
+    ): com.google.firebase.ai.type.GenerateContentResponse {
+        var lastError: Exception? = null
+        for ((index, entry) in attempts.withIndex()) {
+            val (modelName, model) = entry
+            try {
+                return block(model)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                val isTransient = isTransientDemandError(e)
+                val hasNext = index < attempts.lastIndex
+                Log.w(TAG, "Exam $role model $modelName failed (transient=$isTransient): ${e.message}")
+                if (!isTransient || !hasNext) {
+                    throw e
+                }
+                kotlinx.coroutines.delay(if (index == 0) 900L else 1800L)
+            }
+        }
+        throw lastError ?: IllegalStateException("AI $role request failed.")
+    }
+
+    private fun isTransientDemandError(error: Throwable): Boolean {
+        val fullMessage = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+            .lowercase()
+        return fullMessage.contains("high demand") ||
+            fullMessage.contains("overloaded") ||
+            fullMessage.contains("unavailable") ||
+            fullMessage.contains("503") ||
+            fullMessage.contains("429") ||
+            fullMessage.contains("resource exhausted") ||
+            fullMessage.contains("rate limit") ||
+            fullMessage.contains("too many requests") ||
+            fullMessage.contains("try again")
+    }
 }
