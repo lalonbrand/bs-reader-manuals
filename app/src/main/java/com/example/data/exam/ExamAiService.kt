@@ -220,7 +220,7 @@ class ExamAiService {
                             - If a question has an answer key later on the same pages, match them together.
                         """.trimIndent()
 
-                        val rawJson = withTimeout(60_000L) {
+                        val rawJson = withTimeout(70_000L) {
                             GeminiRestClient.generateStructuredJson(
                                 promptText = chunkPrompt,
                                 images = bitmaps,
@@ -374,7 +374,7 @@ class ExamAiService {
                 """.trimIndent()
 
                 val jsonStr = try {
-                    withTimeout(60_000L) {
+                    withTimeout(70_000L) {
                         GeminiRestClient.generateStructuredJson(
                             promptText = promptText,
                             images = emptyList(),
@@ -384,7 +384,7 @@ class ExamAiService {
                     }
                 } catch (e: TimeoutCancellationException) {
                     Log.e(TAG, "AI grading timed out", e)
-                    throw IllegalStateException("AI grading timed out after 60 seconds. Please tap Submit Exam again.", e)
+                    throw IllegalStateException("AI grading timed out. Please tap Submit Exam again.", e)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

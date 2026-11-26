@@ -18,7 +18,7 @@ import kotlin.math.max
 
 private const val TAG = "PageTranslationService"
 private const val MAX_IMAGE_SIDE_PX = 1280
-private const val TRANSLATION_TIMEOUT_MS = 60_000L
+private const val TRANSLATION_TIMEOUT_MS = 70_000L
 
 class PageTranslationService {
 
@@ -94,7 +94,7 @@ class PageTranslationService {
                 }
             } catch (e: TimeoutCancellationException) {
                 Log.e(TAG, "Page translation timed out for ${pageFile.name}", e)
-                throw IllegalStateException("Translation timed out after 60 seconds. Check internet connection and retry.", e)
+                throw IllegalStateException("Translation timed out. Check internet connection and retry.", e)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

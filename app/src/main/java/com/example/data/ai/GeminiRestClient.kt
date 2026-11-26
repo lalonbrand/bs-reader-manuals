@@ -69,9 +69,9 @@ object GeminiRestClient {
         val encodedImages = images.map { encodeBitmapAsBase64Jpeg(it) }
 
         val attempts = listOf(
-            ModelAttempt("gemini-3.8-flash", useLowThinking = true, timeoutMs = 25_000L),
-            ModelAttempt("gemini-3.5-flash-lite", useLowThinking = false, timeoutMs = 30_000L),
-            ModelAttempt("gemini-2.5-flash", useLowThinking = false, timeoutMs = 30_000L)
+            ModelAttempt("gemini-3.8-flash", useLowThinking = true, timeoutMs = 22_000L),
+            ModelAttempt("gemini-3.5-flash-lite", useLowThinking = false, timeoutMs = 20_000L),
+            ModelAttempt("gemini-2.5-flash", useLowThinking = false, timeoutMs = 20_000L)
         )
 
         var lastError: Exception? = null

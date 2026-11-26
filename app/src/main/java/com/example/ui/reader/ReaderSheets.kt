@@ -421,7 +421,7 @@ fun BilingualTranslationBottomSheet(
                         color = SoftCyan
                     )
                     Text(
-                        text = "$translatedPagesCount / $totalPages pages cached offline",
+                        text = "$translatedPagesCount / $totalPages pages translated",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("translated_pages_count_label")
@@ -665,7 +665,7 @@ fun BilingualTranslationBottomSheet(
                             textAlign = TextAlign.Center
                         )
                         Text(
-                            text = "Reading paragraphs directly from the manual page and saving to your offline device cache.",
+                            text = "Translating this manual page into natural Bangla online...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -755,7 +755,7 @@ fun BilingualTranslationBottomSheet(
                             text = if (isCheckedEmptyPage) {
                                 "This page appears to be an illustration, diagram, or blank separator."
                             } else {
-                                "Tap below to translate this page to natural Bangla and cache it offline."
+                                "Tap below to translate this page into natural Bangla online."
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
